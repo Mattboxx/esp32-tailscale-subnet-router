@@ -507,6 +507,15 @@ esp_netif_t *wifi_init_softap(void)
              use_ssid, (int)channel,
              (nvs_ssid && nvs_ssid[0]) ? "NVS" : "Kconfig");
 
+    /* WARN level on purpose: the runtime default log level is WARN, so
+     * this is the one line a first-time flasher actually sees on serial
+     * telling them which network to join (issue #9). */
+    esp_netif_ip_info_t ap_ip_info;
+    if (esp_netif_get_ip_info(esp_netif_ap, &ap_ip_info) == ESP_OK) {
+        ESP_LOGW(TAG_AP, "AP '%s' starting - connect to it and open http://" IPSTR "/",
+                 use_ssid, IP2STR(&ap_ip_info.ip));
+    }
+
     free(nvs_ssid);
     free(nvs_pw);
     return esp_netif_ap;

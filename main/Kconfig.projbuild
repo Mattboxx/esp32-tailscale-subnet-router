@@ -5,7 +5,7 @@ menu "Example Configuration"
 
         config ESP_WIFI_AP_SSID
             string "WiFi AP SSID"
-            default "myssid"
+            default "ESP32-TSR-Setup"
             help
                 SSID (network name) of the AP for the example to connect to.
 

@@ -186,8 +186,12 @@ idf.py build flash monitor
 
 ### 2. First-time setup
 
-On first boot the device brings up its access point. Connect to it, open
-the device IP in a browser, and set an admin password.
+On first boot the device brings up its own access point:
+
+- SSID: **`ESP32-TSR-Setup`** (builds before v0.1.18: `myssid`),
+  password: **`mypassword`**
+- Connect to it and open **http://192.168.4.1** — set an admin password
+  there, then rename the AP to your liking.
 
 <div align="center">
 <img src="docs/images/login.png" alt="First-run admin password" width="46%">
