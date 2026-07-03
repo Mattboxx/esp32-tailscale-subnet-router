@@ -377,12 +377,19 @@ configuration reference.
 The device authenticates with a standard **Tailscale** auth key and has
 been validated against the hosted Tailscale control plane.
 
-> ⚠️ **Headscale does not currently work.** The UI accepts a custom login
-> server (Headscale) URL, but testing against Headscale v0.28.0 found the
-> ts2021 control-plane **Noise handshake fails** (the server rejects the
-> machine-key handshake), so the device cannot register. Tracked in
-> [#7](../../issues/7) — a fix is being investigated. For now use Tailscale's
-> hosted control plane.
+**Headscale is supported** (validated against Headscale v0.28.0; requires
+Headscale ≥ 0.26): set **Login server** to your server and authenticate
+with a Headscale pre-auth key. Accepted forms:
+
+- `host` or `host:port` — plain TCP, port defaults to 80
+- `http://host[:port]` — e.g. `http://192.168.1.42:8080`
+- `https://host[:port]` — TLS, port defaults to 443. The certificate is
+  validated against the ESP-IDF public-CA bundle (Let's Encrypt works);
+  **self-signed / private-CA certificates are not supported**.
+
+The device fetches the server's Noise public key from `/key?v=88` and
+reads the initial netmap from the streaming long-poll, matching what
+current Headscale versions require.
 
 `tailnet lock` is not supported (the device cannot sign its own node
 key); disable it for the tailnet or pre-authorize the node.
@@ -399,7 +406,8 @@ key); disable it for the tailnet or pre-authorize the node.
 - **Exit node fails closed.** By design — when a selected exit node is
   unreachable, AP-client internet traffic stops rather than leaking to
   the local uplink. Clear the exit node to restore direct internet.
-- **Headscale not working** (see above — a control-plane handshake incompatibility is under investigation). **Tailnet lock unsupported.**
+- **Tailnet lock unsupported.** Headscale over HTTPS needs a public-CA
+  certificate (self-signed is rejected).
 - **2.4 GHz only**, single AP subnet.
 
 ## Telemetry

@@ -6,6 +6,33 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.1.18-beta1] — 2026-07-03
+
+### Added
+
+- **Headscale support works end-to-end.** (#7) The login-server field now
+  accepts `host`, `host:port`, `http://host[:port]` and `https://host[:port]`
+  (TLS via the ESP-IDF public-CA bundle — Let's Encrypt works, self-signed
+  does not), and the device fetches the control plane's Noise public key from
+  `/key?v=88` instead of assuming the hosted-Tailscale key, so the ts2021
+  machine-key handshake succeeds against Headscale. Validated live against
+  Headscale v0.28.0 over both plain HTTP (`http://host:8080`) and HTTPS
+  behind a Let's Encrypt proxy; the hosted-Tailscale path re-validated over
+  both plain TCP and `https://controlplane.tailscale.com`. (microlink
+  submodule; ports esphome-tailscale `5ecc5ee` + `9be7d81`.)
+
+### Fixed
+
+- **Netmap arrives via the streaming long-poll (Headscale ≥ 0.26).**
+  Headscale only delivers the full netmap on a streaming map request — the
+  old one-shot fetch got an empty response and reconnect-looped ("Empty
+  MapResponse"). The initial netmap is now consumed from the long-poll
+  stream; the hosted-Tailscale flow is unchanged.
+- **First-boot AP is discoverable.** (#9) Default SSID renamed `myssid` →
+  `ESP32-TSR-Setup`, the README now documents the default credentials and
+  `http://192.168.4.1`, and boot prints the AP name + web-UI URL on serial
+  at the default log level.
+
 ## [0.1.17] — 2026-06-11
 
 Stable release. Promotes the 0.1.16 fixes (exit-node TAI64N handshake timestamps,
