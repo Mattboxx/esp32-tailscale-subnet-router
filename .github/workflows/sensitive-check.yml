@@ -19,7 +19,11 @@ jobs:
         id: changed
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+            # On pull_request events HEAD is the PR merge commit; its first
+            # parent is the base tip, and fetch-depth: 2 guarantees both
+            # parents are present. origin/<base_ref> is NOT fetched on a
+            # shallow checkout, so diffing against it exits 128.
+            FILES=$(git diff --name-only HEAD^1 HEAD)
           else
             FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || git ls-files)
           fi
