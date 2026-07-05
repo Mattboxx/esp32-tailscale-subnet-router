@@ -165,6 +165,17 @@ them. This is a free hobby project and I'm not planning to buy extra
 boards just to validate other hardware. If you get it running elsewhere,
 great — but you're on your own there, and PRs are welcome.
 
+### Board compatibility notes (community-tested)
+
+Real-world results from the field (see [#9](../../issues/9) — thanks @bobcroft):
+
+| Board | Result |
+|---|---|
+| **ESP32-S3-DevKitC-1 N16R8** (genuine) | ✅ Reference — developed and tested on this |
+| **Freenove ESP32-S3-WROOM N8R8** | ✅ Community-confirmed: AP, web UI, full setup |
+| **Seeed XIAO ESP32-S3 N8R8** | ☑️ AP + web UI come up; not fully verified yet |
+| **YD-ESP32-S3 ("YD32") clones** | ❌ SoftAP never visible on air — fails even with a minimal ESP-IDF AP example, i.e. a board-level RF problem, not this firmware |
+
 ## Quick start
 
 ### 1. Build & flash
