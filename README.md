@@ -184,7 +184,7 @@ Real-world results from the field (see [#9](../../issues/9) and
 > join. No log survives from the failed first boot, so this is a known rough
 > edge rather than a diagnosed bug. If you hit it, erase the flash and retry.
 > The `factory-full.bin` asset on the
-> [v0.1.18-beta1 release](../../releases/tag/v0.1.18-beta1) is a full-flash
+> [latest release](../../releases/latest) is a full-flash
 > image and rewrites the NVS region too, so it sidesteps this as well.
 
 ## Quick start
