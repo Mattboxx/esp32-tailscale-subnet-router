@@ -6,6 +6,16 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.1.18] — 2026-08-06
+
+Stable release. Promotes the 0.1.18-beta1 changes (end-to-end Headscale
+support, netmap via the streaming long-poll, discoverable first-boot AP) to a
+stable build after a five-week beta bake with no regressions reported; no
+functional changes versus 0.1.18-beta1. Also folds in the GCC 14 build fix
+(#10): the false-positive `-Wmaybe-uninitialized` in ESP-IDF's
+`esp_driver_i2c` is downgraded to non-fatal for that one component, so fresh
+builds succeed on hosts whose toolchain trips it.
+
 ## [0.1.18-beta1] — 2026-07-03
 
 ### Added
