@@ -38,6 +38,7 @@
 
 #include "nvs_params.h"
 #include "tailscale_config.h"
+#include "microlink.h"                /* microlink_get_diag — reconnect-cause counters */
 #include "telemetry.h"
 
 /* Cross-module state owned by main.c. ap_connect lets the sender task
@@ -249,7 +250,17 @@ static esp_err_t do_send(const char *event_type)
      * realign from a generic SW reset. */
     extern char g_reboot_why[];
 
-    char body[640];
+    /* Reconnect-cause counters (since boot) from microlink — zeros when
+     * tailscale is off or not yet started. Per-cause on purpose: a single
+     * combined connect-count overcounts as a health signal (ordinary
+     * transport flaps are indistinguishable from watchdog saves). */
+    microlink_diag_t mdiag = {0};
+    {
+        struct microlink_s *mlh = tailscale_get_microlink();
+        if (mlh) microlink_get_diag(mlh, &mdiag);
+    }
+
+    char body[768];
     int n;
     if (crash_sig[0]) {
         n = snprintf(body, sizeof(body),
@@ -266,6 +277,7 @@ static esp_err_t do_send(const char *event_type)
             "\"ch\":\"%s\","
             "\"fh\":%u,"
             "\"ac\":%d,"
+            "\"rcs\":%u,\"rct\":%u,\"rcd\":%u,\"rcr\":%u,"
             "\"ts\":\"%s\","
             "\"cr\":\"%s\""
             "}",
@@ -273,6 +285,8 @@ static esp_err_t do_send(const char *event_type)
             (unsigned)s_state.boot_count, (unsigned)s_state.flash_count,
             (unsigned long long)uptime_s, reset_reason_code(), g_reboot_why,
             chip_model_str(), (unsigned)free_heap, connect_count,
+            (unsigned)mdiag.rc_coord_stream_wd, (unsigned)mdiag.rc_coord_transport,
+            (unsigned)mdiag.rc_derp_rx_wd, (unsigned)mdiag.rc_derp_retry,
             tailscale_status_str(), crash_sig);
     } else {
         n = snprintf(body, sizeof(body),
@@ -289,12 +303,15 @@ static esp_err_t do_send(const char *event_type)
             "\"ch\":\"%s\","
             "\"fh\":%u,"
             "\"ac\":%d,"
+            "\"rcs\":%u,\"rct\":%u,\"rcd\":%u,\"rcr\":%u,"
             "\"ts\":\"%s\""
             "}",
             s_state.device_hash, ver, build, event_type,
             (unsigned)s_state.boot_count, (unsigned)s_state.flash_count,
             (unsigned long long)uptime_s, reset_reason_code(), g_reboot_why,
             chip_model_str(), (unsigned)free_heap, connect_count,
+            (unsigned)mdiag.rc_coord_stream_wd, (unsigned)mdiag.rc_coord_transport,
+            (unsigned)mdiag.rc_derp_rx_wd, (unsigned)mdiag.rc_derp_retry,
             tailscale_status_str());
     }
     if (n < 0 || n >= (int)sizeof(body)) {

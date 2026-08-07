@@ -6,6 +6,54 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.1.19-beta1] — 2026-08-07
+
+**Beta pre-release** — DERP relay liveness. Ports the esphome-tailscale
+v0.5.5 fix bundle and the HTTP/2 reassembly series into the microlink
+submodule (reported and analyzed by timmills in esphome-tailscale#31/#32/#33,
+bench-verified there), plus two earlier fixes those trees had and ours
+didn't.
+
+### Fixed
+
+- **A dead DERP relay connection now recovers on its own.** Previously 3
+  failed connect attempts parked the relay task forever with nothing left to
+  re-arm it — the device stayed "connected" while relay-only peers could
+  never reach it again. Now: endless exponential backoff (5 s → 60 s cap),
+  a 90 s RX-liveness watchdog on a "connected" relay, and every connect
+  failure path tears the TLS context down completely (each leaked ~17 KB
+  before, eventually killing all later handshakes). (microlink submodule.)
+- **ACL revocation reaches the device.** A full `Peers` list in a
+  MapResponse is now authoritative — table entries omitted from it are
+  swept, and peer removal also drops the NVS boot-cache entry, so revoked
+  peers stay gone across reboots instead of resurrecting.
+- **Large MapResponses no longer corrupt the long-poll stream.** HTTP/2
+  frames that span a read boundary are reassembled instead of dropped
+  (a big netmap deterministically desynced the stream parser).
+- **Control-plane map-stream watchdog** (silent mapSession death behind a
+  live HTTP/2 front end → automatic re-register within ~5 min) and the
+  register-after-stream-read ordering fix — catch-up ports of
+  esphome-tailscale v0.5.4/v0.5.2 fixes that predate this repo's submodule
+  pin.
+- `DISCO decrypt failed` now names the claimed sender and arrival path.
+
+### Added
+
+- **Per-cause reconnect counters in telemetry** (`rcs`/`rct`/`rcd`/`rcr`):
+  map-stream watchdog fires, coord transport deaths, DERP RX-watchdog
+  fires, and failed DERP connect attempts — so the fleet can distinguish
+  watchdog saves from ordinary transport flaps (a single combined connect
+  count overcounts).
+
+### Known limitation
+
+- The opt-in netcheck home-DERP override (`tailscale_netcheck_override`,
+  default OFF) still announces the *configured* region in
+  `NetInfo.PreferredDERP` while connecting to the measured one — peers
+  would dial the announced region. Leave the override OFF (the default)
+  until the announce-before-move rework (esphome-tailscale#36) lands
+  upstream and gets ported.
+
 ## [0.1.18] — 2026-08-06
 
 Stable release. Promotes the 0.1.18-beta1 changes (end-to-end Headscale
