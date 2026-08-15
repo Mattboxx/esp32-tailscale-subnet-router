@@ -6,6 +6,19 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.1.19] — 2026-08-15
+
+Stable release. Promotes the 0.1.19-beta1 DERP-liveness work to a stable
+build after an eight-day beta bake; **no functional changes versus
+0.1.19-beta1** (the only delta is the version string).
+
+Bake evidence: the reference device ran 168 hours without a single reboot
+or crash, during which the new control-plane map-stream watchdog caught and
+self-healed **eight** silently dead map sessions — roughly one per day, each
+one an outage that earlier firmware would have ridden out as a wedged
+control plane until someone power-cycled the board. A second device on a
+different continent ran the same build with no faults reported.
+
 ## [0.1.19-beta1] — 2026-08-07
 
 **Beta pre-release** — DERP relay liveness. Ports the esphome-tailscale
