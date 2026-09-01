@@ -143,6 +143,34 @@ static void dns_relay_state_cb(bool healthy)
 #define WIFI_RETRIES_PER_NETWORK 5
 static int s_net_current = 0;
 static int s_net_retries = 0;
+/* A manual web-UI scan may have to abort an in-progress association:
+ * ESP-IDF rejects esp_wifi_scan_start() while the STA state machine is
+ * connecting.  Suppress the DISCONNECTED handler's immediate reconnect
+ * until the scan-done callback explicitly resumes normal operation. */
+static volatile bool s_manual_scan_active = false;
+
+void wifi_sta_pause_for_scan(void)
+{
+    s_manual_scan_active = true;
+    esp_err_t err = esp_wifi_disconnect();
+    if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_CONNECT) {
+        ESP_LOGW(TAG_STA, "scan pause: esp_wifi_disconnect failed: %s",
+                 esp_err_to_name(err));
+    }
+}
+
+void wifi_sta_resume_after_scan(void)
+{
+    if (!s_manual_scan_active) return;
+    s_manual_scan_active = false;
+    if (wifi_networks_count() > 0) {
+        esp_err_t err = esp_wifi_connect();
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG_STA, "scan resume: esp_wifi_connect failed: %s",
+                     esp_err_to_name(err));
+        }
+    }
+}
 
 /* Tracks the last applied enterprise state so we only disable when
  * actually switching away from an EAP slot. Calling enterprise_disable
@@ -304,10 +332,18 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
                  MAC2STR(event->mac), event->aid, event->reason);
         if (connect_count > 0) connect_count--;
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        esp_wifi_connect();
-        ESP_LOGI(TAG_STA, "Station started");
+        if (wifi_networks_count() > 0) {
+            esp_wifi_connect();
+            ESP_LOGI(TAG_STA, "Station started");
+        } else {
+            ESP_LOGI(TAG_STA, "Station started idle — waiting for uplink configuration");
+        }
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         ap_connect = 0;
+        if (s_manual_scan_active) {
+            ESP_LOGI(TAG_STA, "STA reconnect paused for manual scan");
+            return;
+        }
         /* Multi-network rotation: stay on the current SSID for
          * WIFI_RETRIES_PER_NETWORK association attempts, then roll
          * forward to the next configured slot. Single-network setups
@@ -322,7 +358,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
                 wifi_apply_network(s_net_current);
             }
         }
-        esp_wifi_connect();
+        if (total > 0) esp_wifi_connect();
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
         ESP_LOGI(TAG_STA, "Got IP:" IPSTR, IP2STR(&event->ip_info.ip));
@@ -541,9 +577,29 @@ esp_netif_t *wifi_init_sta(void)
     }
     free(nvs_hostname);
 
-    if (wifi_networks_count() > 0) {
+    int configured = wifi_networks_count();
+
+    /* Older builds wrote the Kconfig sample credentials to the driver's
+     * own NVS and then migrated them into wifi_nets on the next boot.  That
+     * leaves a fresh device trying "otherapssid" forever, and ESP-IDF refuses
+     * manual scans while that association is in progress.  Remove only the
+     * exact shipped placeholder pair as a one-time repair. */
+    if (configured == 1) {
+        wifi_network_t only;
+        if (wifi_networks_get(0, &only)
+            && strcmp(only.ssid, EXAMPLE_ESP_WIFI_STA_SSID) == 0
+            && strcmp(only.passwd, EXAMPLE_ESP_WIFI_STA_PASSWD) == 0) {
+            wifi_network_t empty = {0};
+            ESP_LOGW(TAG_STA, "removing migrated Kconfig placeholder SSID '%s'",
+                     only.ssid);
+            (void)wifi_networks_set_all(&empty, 0);
+            configured = 0;
+        }
+    }
+
+    if (configured > 0) {
         ESP_LOGI(TAG_STA, "wifi_init_sta: %d network(s) configured, starting with slot 0",
-                 wifi_networks_count());
+                 configured);
         s_net_current = 0;
         s_net_retries = 0;
         wifi_apply_network(0);
@@ -554,7 +610,9 @@ esp_netif_t *wifi_init_sta(void)
          * so we own it going forward. Otherwise fall through to the
          * Kconfig default. Never blindly overwrite a working config. */
         wifi_config_t cur;
-        if (esp_wifi_get_config(WIFI_IF_STA, &cur) == ESP_OK && cur.sta.ssid[0]) {
+        if (esp_wifi_get_config(WIFI_IF_STA, &cur) == ESP_OK && cur.sta.ssid[0]
+            && !(strcmp((const char *)cur.sta.ssid, EXAMPLE_ESP_WIFI_STA_SSID) == 0
+                 && strcmp((const char *)cur.sta.password, EXAMPLE_ESP_WIFI_STA_PASSWD) == 0)) {
             wifi_network_t n = {0};
             strlcpy(n.ssid,   (const char *)cur.sta.ssid,     sizeof n.ssid);
             strlcpy(n.passwd, (const char *)cur.sta.password, sizeof n.passwd);
@@ -563,18 +621,11 @@ esp_netif_t *wifi_init_sta(void)
             ESP_LOGI(TAG_STA, "wifi_init_sta: migrated esp_wifi cached SSID '%s' into slot 0",
                      n.ssid);
         } else {
-            wifi_config_t cfg = {
-                .sta = {
-                    .scan_method        = WIFI_ALL_CHANNEL_SCAN,
-                    .failure_retry_cnt  = EXAMPLE_ESP_MAXIMUM_RETRY,
-                    .threshold.authmode = ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD,
-                    .sae_pwe_h2e        = WPA3_SAE_PWE_BOTH,
-                },
-            };
-            strlcpy((char *)cfg.sta.ssid,     EXAMPLE_ESP_WIFI_STA_SSID,     sizeof cfg.sta.ssid);
-            strlcpy((char *)cfg.sta.password, EXAMPLE_ESP_WIFI_STA_PASSWD, sizeof cfg.sta.password);
-            ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &cfg));
-            ESP_LOGI(TAG_STA, "wifi_init_sta: no networks saved, using Kconfig default");
+            /* A setup-mode device must leave STA idle.  Connecting to the
+             * Kconfig example SSID both wastes airtime and blocks WiFi scans. */
+            wifi_config_t empty = {0};
+            ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &empty));
+            ESP_LOGI(TAG_STA, "wifi_init_sta: no networks saved; STA left idle for setup");
         }
     }
 
@@ -792,6 +843,11 @@ void app_main(void)
                     NULL,
                     NULL));
 
+    /* Load the multi-network table before the STA is configured.  The
+     * accessor is lazy too, but doing it explicitly here makes setup-mode
+     * state deterministic before any WiFi event can run. */
+    wifi_networks_init();
+
     /*Initialize WiFi */
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
@@ -862,12 +918,6 @@ void app_main(void)
         netif_hooks_set_sta_ttl(ttl);
         if (ttl) ESP_LOGI("main", "STA TTL override → %u", (unsigned)ttl);
     }
-
-    /* Load the multi-network table BEFORE wifi_init_sta runs — that
-     * function reads it to set up the initial association. The init
-     * also migrates the legacy single-network NVS keys into slot 0
-     * on first boot. */
-    wifi_networks_init();
 
     /* DHCP reservation table — read now so the cached lookups are
      * ready before the AP netif starts handing out leases. The

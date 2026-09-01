@@ -97,6 +97,11 @@ CONFIG_LWIP_L2_TO_L3_COPY=y
 # + WG + DERP + 2 httpd pools) blew past 16 and httpd logged
 # "httpd_accept_conn: error in accept (23)" — errno 23 = ENFILE. Up to 24.
 CONFIG_LWIP_MAX_SOCKETS=24
+
+# A modern browser request plus the 64-byte ts_session cookie routinely
+# exceeds ESP-IDF's 512-byte default.  At 512 the server rejects otherwise
+# valid API POSTs with HTTP 431 before the save handler can run.
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
 # 2026-05-24 throughput-regression bisect: comparing the migration target
 # sdkconfig against the pre-migration OLD repo (which delivered the
 # expected 1 Mbps WG-tunnel throughput) showed the NEW config aggressively

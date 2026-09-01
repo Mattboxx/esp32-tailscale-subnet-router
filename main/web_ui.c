@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+#include "sdkconfig.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_wifi.h"
@@ -64,6 +65,8 @@
 /* Globals owned by main.c — link status flags rendered in /api/status. */
 extern int ap_connect;
 extern int connect_count;
+extern void wifi_sta_pause_for_scan(void);
+extern void wifi_sta_resume_after_scan(void);
 
 static const char *TAG = "web_ui";
 
@@ -966,7 +969,8 @@ static esp_err_t network_save_handler(httpd_req_t *req)
             n->valid = 1;
             n_out++;
         }
-        wifi_networks_set_all(arr, n_out);
+        esp_err_t save_err = wifi_networks_set_all(arr, n_out);
+        nvs_save_record_err("wifi_nets", save_err);
     }
 
     /* Backward-compat path: pre-multi-network SPA clients still POST
@@ -996,7 +1000,8 @@ static esp_err_t network_save_handler(httpd_req_t *req)
                 if (cJSON_IsString(dns))  strlcpy(one.dns,       dns->valuestring,  sizeof one.dns);
             }
             one.valid = 1;
-            wifi_networks_set_all(&one, 1);
+            esp_err_t save_err = wifi_networks_set_all(&one, 1);
+            nvs_save_record_err("wifi_nets", save_err);
         }
         save_str_if_present(sta, "hostname", "hostname");
     }
@@ -1172,6 +1177,7 @@ static void scan_done_event(void *arg, esp_event_base_t base, int32_t id, void *
     s_scan_done_ms = (uint32_t)(esp_timer_get_time() / 1000);
     s_scan_state   = SCAN_READY;
     xSemaphoreGive(s_scan_mutex);
+    wifi_sta_resume_after_scan();
     ESP_LOGI("web_ui", "async scan done: %u networks", (unsigned)n);
 }
 
@@ -1205,13 +1211,29 @@ static esp_err_t network_scan_handler(httpd_req_t *req)
             .scan_type = WIFI_SCAN_TYPE_PASSIVE,
             .scan_time = { .passive = 120 },
         };
-        if (esp_wifi_scan_start(&cfg, false) != ESP_OK) {
+        esp_err_t scan_err = esp_wifi_scan_start(&cfg, false);
+        if (scan_err == ESP_ERR_WIFI_STATE) {
+            /* IDF refuses scans while an association is in progress. Pause
+             * the reconnect loop, let DISCONNECTED settle, then retry once.
+             * Connected stations normally scan without entering this path. */
+            ESP_LOGI("web_ui", "STA is connecting; pausing it for manual scan");
+            wifi_sta_pause_for_scan();
+            vTaskDelay(pdMS_TO_TICKS(150));
+            scan_err = esp_wifi_scan_start(&cfg, false);
+        }
+        if (scan_err != ESP_OK) {
+            wifi_sta_resume_after_scan();
             xSemaphoreTake(s_scan_mutex, portMAX_DELAY);
             s_scan_state = SCAN_ERROR;
             xSemaphoreGive(s_scan_mutex);
+            ESP_LOGE("web_ui", "esp_wifi_scan_start failed: %s",
+                     esp_err_to_name(scan_err));
             httpd_resp_set_type(req, "application/json");
-            return httpd_resp_sendstr(req,
-                "{\"status\":\"error\",\"reason\":\"esp_wifi_scan_start failed\"}");
+            char body[112];
+            snprintf(body, sizeof body,
+                     "{\"status\":\"error\",\"reason\":\"esp_wifi_scan_start: %s\"}",
+                     esp_err_to_name(scan_err));
+            return httpd_resp_sendstr(req, body);
         }
     }
 
@@ -4416,11 +4438,23 @@ void web_ui_init(void)
     conf.uri_match_fn             = httpd_uri_match_wildcard;
     conf.max_uri_handlers         = 58;
     conf.stack_size               = 12288;
-    /* Without the mbedTLS context cost we can afford the bigger pool
-     * the pre-HTTPS web server used. The SPA's first-paint opens 5-7
-     * parallel fetches; 13 leaves slack for the SPA + a sibling
-     * curl/diag client + the operator's other tab. */
-    conf.max_open_sockets         = 13;
+    /* The HTTP server needs three lwIP sockets internally. Older ESP-IDF
+     * releases cap CONFIG_LWIP_MAX_SOCKETS at 16 and silently replace an
+     * out-of-range sdkconfig value with the default (10). Clamp the client
+     * pool so a stale/generated sdkconfig cannot make httpd_start fail and
+     * take the entire setup UI down. */
+    const size_t httpd_internal_sockets = 3;
+    const size_t desired_http_clients = 13;
+    if (CONFIG_LWIP_MAX_SOCKETS <= httpd_internal_sockets) {
+        ESP_LOGE(TAG, "CONFIG_LWIP_MAX_SOCKETS=%d leaves no sockets for HTTP clients",
+                 CONFIG_LWIP_MAX_SOCKETS);
+        return;
+    }
+    const size_t available_http_clients =
+        CONFIG_LWIP_MAX_SOCKETS - httpd_internal_sockets;
+    conf.max_open_sockets = available_http_clients < desired_http_clients
+                          ? available_http_clients
+                          : desired_http_clients;
     conf.lru_purge_enable         = true;
     conf.server_port              = 80;
 
