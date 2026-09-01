@@ -1936,6 +1936,12 @@
           </div>
           <div class="form-group" style="margin-top:0.25rem;">
             <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+              <input type="checkbox" id="net-ap-auto-off"> Recovery-only AP (turn off while uplink is connected)
+            </label>
+            <span class="form-hint">Recommended when this device only exposes the uplink LAN to Tailscale. The AP turns off after STA gets an IP and automatically returns if the uplink drops, so configuration remains recoverable.</span>
+          </div>
+          <div class="form-group" style="margin-top:0.25rem;">
+            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
               <input type="checkbox" id="net-ap-dns-relay-enabled"> On-board DNS forwarder
               <span class="badge badge-neutral" id="net-ap-dns-relay-badge" style="margin-left:auto;">—</span>
             </label>
@@ -1958,6 +1964,33 @@
           <div class="form-footer-actions">
             <button class="btn btn-secondary btn-md" id="net-ap-reload">Reload</button>
             <button class="btn btn-primary btn-md" id="net-ap-save" disabled>Save</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== Wake-on-LAN ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">Wake-on-LAN</span>
+          </div>
+          <span class="badge badge-neutral" id="wol-badge">—</span>
+        </div>
+        <div class="card-body">
+          <p class="form-hint" style="margin:0 0 0.75rem 0;">
+            Save computers and appliances that support Wake-on-LAN, then send a magic packet from this ESP32.
+            Leave broadcast empty to derive it from the current uplink (for example <code class="mono">192.168.1.255</code>).
+          </p>
+          <div id="wol-list"></div>
+          <div style="margin-top:0.75rem;">
+            <button class="btn btn-secondary btn-md" id="wol-add-btn" type="button">+ Add device</button>
+          </div>
+        </div>
+        <div class="form-footer">
+          <span class="form-footer-hint">Magic packets use UDP port 9 by default. Saved devices are also exposed as Home Assistant buttons when MQTT discovery is enabled.</span>
+          <div class="form-footer-actions">
+            <button class="btn btn-secondary btn-md" id="wol-reload">Reload</button>
+            <button class="btn btn-primary btn-md" id="wol-save" disabled>Save</button>
           </div>
         </div>
       </div>
@@ -2605,7 +2638,48 @@
         </div>
       </div>
 
-
+      <!-- ===== MQTT + Home Assistant ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left"><span class="card-title">MQTT &amp; Home Assistant</span></div>
+          <span class="badge badge-neutral" id="mqtt-badge">—</span>
+        </div>
+        <div class="card-body">
+          <div class="form-group">
+            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+              <input type="checkbox" id="mqtt-enabled"> Enable MQTT
+            </label>
+            <span class="form-hint">Publishes a retained status packet and listens for commands. Supports <code class="mono">mqtt://</code>, <code class="mono">mqtts://</code>, WebSocket and secure WebSocket broker URIs.</span>
+          </div>
+          <div class="grid grid-cols-2">
+            <div class="form-group"><label class="form-label" for="mqtt-uri">Broker URI</label><input class="input mono" id="mqtt-uri" placeholder="mqtt://192.168.1.10:1883"></div>
+            <div class="form-group"><label class="form-label" for="mqtt-topic">Base topic</label><input class="input mono" id="mqtt-topic" placeholder="esp32-router/a1b2c3"></div>
+          </div>
+          <div class="grid grid-cols-2">
+            <div class="form-group"><label class="form-label" for="mqtt-user">Username</label><input class="input" id="mqtt-user" autocomplete="username"></div>
+            <div class="form-group"><label class="form-label" for="mqtt-password">Password</label><input class="input" type="password" id="mqtt-password" autocomplete="new-password" placeholder="Leave empty to keep current"><label class="form-hint" style="display:flex; gap:0.35rem; align-items:center;"><input type="checkbox" id="mqtt-password-clear"> Clear saved password</label></div>
+          </div>
+          <div class="grid grid-cols-2">
+            <div class="form-group"><label class="form-label" for="mqtt-interval">Status interval (seconds)</label><input class="input mono" type="number" id="mqtt-interval" min="5" max="3600" value="30"></div>
+            <div class="form-group"><label class="form-label" for="mqtt-ha-prefix">Discovery prefix</label><input class="input mono" id="mqtt-ha-prefix" value="homeassistant"></div>
+          </div>
+          <div class="form-group">
+            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+              <input type="checkbox" id="mqtt-ha-enabled"> Home Assistant MQTT discovery
+            </label>
+            <span class="form-hint">Creates uplink/Tailscale/status sensors, an “AP always on” switch, a restart button, and a Wake button for every saved WOL device.</span>
+          </div>
+          <div class="form-hint mono" id="mqtt-topics-help">—</div>
+        </div>
+        <div class="form-footer">
+          <span class="form-footer-hint">Changes apply live. TLS connections validate the broker certificate with the ESP-IDF CA bundle.</span>
+          <div class="form-footer-actions">
+            <button class="btn btn-ghost btn-md" id="mqtt-publish" type="button">Publish now</button>
+            <button class="btn btn-secondary btn-md" id="mqtt-reload" type="button">Reload</button>
+            <button class="btn btn-primary btn-md" id="mqtt-save" type="button" disabled>Save</button>
+          </div>
+        </div>
+      </div>
 
       <!-- ===== SD flight-recorder ===== -->
       <div class="card mt-4">
@@ -4340,6 +4414,7 @@
             drb.textContent = 'unhealthy'; drb.className = 'badge badge-warning';
           }
           document.getElementById('net-ap-hidden').checked  = !!ap.hidden;
+          document.getElementById('net-ap-auto-off').checked = !!ap.auto_off_when_connected;
           document.getElementById('net-ap-save').disabled   = true;
         }).catch(function () {});
 
@@ -4372,6 +4447,7 @@
 
       /* DHCP reservations + connected-client/lease snapshot. */
       loadDhcpReservations();
+      loadWol();
       loadDhcpLeases();
       loadDenylist();
       loadPortmap();
@@ -4646,6 +4722,9 @@
     document.getElementById('net-ap-hidden').addEventListener('change', function () {
       document.getElementById('net-ap-save').disabled = false;
     });
+    document.getElementById('net-ap-auto-off').addEventListener('change', function () {
+      document.getElementById('net-ap-save').disabled = false;
+    });
     document.getElementById('net-ap-reload').addEventListener('click', loadNetwork);
     document.getElementById('net-ap-save').addEventListener('click', function () {
       var ssid    = document.getElementById('net-ap-ssid').value.trim();
@@ -4662,6 +4741,7 @@
         ap: {
           ssid: ssid, ip: ip, mask: mask, dns: dns,
           hidden: document.getElementById('net-ap-hidden').checked,
+          auto_off_when_connected: document.getElementById('net-ap-auto-off').checked,
           dns_relay: {
             enabled:  document.getElementById('net-ap-dns-relay-enabled').checked,
             upstream: document.getElementById('net-ap-dns-relay-upstream').value.trim()
@@ -4670,6 +4750,139 @@
       };
       if (pw) body.ap.password = pw;
       saveNetwork(this, body);
+    });
+
+    // =====================================================================
+    // WAKE-ON-LAN ADDRESS BOOK
+    // =====================================================================
+    var s_wol_list = [];
+    var s_wol_max = 12;
+
+    function markWolDirty() {
+      document.getElementById('wol-save').disabled = false;
+    }
+
+    function snapshotWolFromDOM() {
+      document.querySelectorAll('.wol-row').forEach(function (row) {
+        var idx = parseInt(row.dataset.idx, 10);
+        if (!s_wol_list[idx]) return;
+        s_wol_list[idx].name = row.querySelector('.wol-name').value;
+        s_wol_list[idx].mac = row.querySelector('.wol-mac').value;
+        s_wol_list[idx].broadcast = row.querySelector('.wol-broadcast').value;
+        s_wol_list[idx].port = parseInt(row.querySelector('.wol-port').value, 10) || 9;
+      });
+    }
+
+    function renderWol() {
+      var list = document.getElementById('wol-list');
+      var badge = document.getElementById('wol-badge');
+      badge.textContent = s_wol_list.length + ' / ' + s_wol_max;
+      badge.className = 'badge ' + (s_wol_list.length ? 'badge-accent' : 'badge-neutral');
+      if (!s_wol_list.length) {
+        list.innerHTML = '<div style="padding:1rem; color:var(--text-muted); border:1px dashed var(--border); border-radius:var(--radius-md);">No saved Wake-on-LAN devices.</div>';
+        return;
+      }
+      var html = '';
+      s_wol_list.forEach(function (d, idx) {
+        html += '<div class="wol-row" data-idx="' + idx + '" style="border:1px solid var(--border); border-radius:var(--radius-md); padding:0.75rem; margin-bottom:0.5rem;">'
+              + '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">'
+              +   '<span class="badge badge-neutral mono">#' + (idx + 1) + '</span>'
+              +   '<div style="display:flex; gap:0.4rem;">'
+              +     '<button class="btn btn-primary btn-sm wol-wake" type="button">Wake</button>'
+              +     '<button class="btn btn-ghost btn-sm text-danger wol-del" type="button" title="Remove">×</button>'
+              +   '</div>'
+              + '</div>'
+              + '<div class="grid grid-cols-2">'
+              +   '<div class="form-group"><label class="form-label">Name</label><input class="input wol-name" maxlength="31" placeholder="Office PC" value="' + escapeHtml(d.name || '') + '"></div>'
+              +   '<div class="form-group"><label class="form-label">MAC address</label><input class="input mono wol-mac" placeholder="aa:bb:cc:dd:ee:ff" value="' + escapeHtml(d.mac || '') + '"></div>'
+              + '</div>'
+              + '<div class="grid grid-cols-2">'
+              +   '<div class="form-group"><label class="form-label">Broadcast (optional)</label><input class="input mono wol-broadcast" placeholder="automatic from uplink" value="' + escapeHtml(d.broadcast || '') + '"></div>'
+              +   '<div class="form-group"><label class="form-label">UDP port</label><input class="input mono wol-port" type="number" min="1" max="65535" value="' + escapeHtml(d.port || 9) + '"></div>'
+              + '</div></div>';
+      });
+      list.innerHTML = html;
+      list.querySelectorAll('.wol-row').forEach(function (row) {
+        var idx = parseInt(row.dataset.idx, 10);
+        row.querySelectorAll('input').forEach(function (el) {
+          el.addEventListener('input', markWolDirty);
+          el.addEventListener('change', markWolDirty);
+        });
+        var saveBtn = document.getElementById('wol-save');
+        attachValidator(row.querySelector('.wol-name'), function (v) {
+          return v.length > 31 ? 'Max 31 characters.' : null;
+        }, { saveBtn: saveBtn });
+        attachValidator(row.querySelector('.wol-mac'), vMAC(false), { saveBtn: saveBtn });
+        attachValidator(row.querySelector('.wol-broadcast'), vIPv4(true), { saveBtn: saveBtn });
+        attachValidator(row.querySelector('.wol-port'), function (v) {
+          var n = parseInt(v, 10);
+          return n >= 1 && n <= 65535 ? null : 'Use a port from 1 to 65535.';
+        }, { saveBtn: saveBtn });
+        row.querySelector('.wol-del').addEventListener('click', function () {
+          snapshotWolFromDOM();
+          s_wol_list.splice(idx, 1);
+          renderWol();
+          markWolDirty();
+        });
+        row.querySelector('.wol-wake').addEventListener('click', function () {
+          var btn = this;
+          btn.disabled = true;
+          apiFetch('/api/wol/send', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ index: idx })
+          }).then(function (r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            showToast('success', 'Magic packet sent', s_wol_list[idx].name || s_wol_list[idx].mac, 3500);
+          }).catch(function (e) {
+            showToast('error', 'Wake failed', e.message || 'The packet could not be sent.', 5000);
+          }).finally(function () { btn.disabled = false; });
+        });
+      });
+    }
+
+    function loadWol() {
+      apiFetch('/api/wol').then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      }).then(function (d) {
+        s_wol_list = (d.devices || []).slice();
+        if (typeof d.max === 'number') s_wol_max = d.max;
+        renderWol();
+        document.getElementById('wol-save').disabled = true;
+      }).catch(function () {});
+    }
+
+    document.getElementById('wol-add-btn').addEventListener('click', function () {
+      if (s_wol_list.length >= s_wol_max) {
+        showToast('error', 'List full', 'Remove a device before adding another.', 4000);
+        return;
+      }
+      snapshotWolFromDOM();
+      s_wol_list.push({ name: '', mac: '', broadcast: '', port: 9 });
+      renderWol();
+      markWolDirty();
+    });
+    document.getElementById('wol-reload').addEventListener('click', loadWol);
+    document.getElementById('wol-save').addEventListener('click', function () {
+      snapshotWolFromDOM();
+      var btn = this;
+      btn.disabled = true;
+      btn.textContent = 'Saving…';
+      apiFetch('/api/wol', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ devices: s_wol_list })
+      }).then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      }).then(function () {
+        btn.textContent = 'Save';
+        showToast('success', 'Saved', 'Wake-on-LAN devices updated.', 3500);
+        loadWol();
+      }).catch(function (e) {
+        btn.textContent = 'Save';
+        btn.disabled = false;
+        showToast('error', 'Save failed', e.message || 'unknown error', 5000);
+      });
     });
 
     // =====================================================================
@@ -6144,7 +6357,104 @@
       if (btn) btn.addEventListener('click', loadDiag);
     })();
 
+    function renderMqttState(d) {
+      var badge = document.getElementById('mqtt-badge');
+      if (!d.enabled) {
+        badge.className = 'badge badge-neutral'; badge.textContent = 'Disabled';
+      } else if (d.connected) {
+        badge.className = 'badge badge-success'; badge.textContent = 'Connected';
+      } else {
+        badge.className = 'badge badge-warning'; badge.textContent = 'Connecting…';
+      }
+      document.getElementById('mqtt-enabled').checked = !!d.enabled;
+      document.getElementById('mqtt-uri').value = d.uri || '';
+      document.getElementById('mqtt-topic').value = d.base_topic || '';
+      document.getElementById('mqtt-user').value = d.username || '';
+      document.getElementById('mqtt-password').value = '';
+      document.getElementById('mqtt-password').placeholder = d.has_password ? 'Saved — leave empty to keep' : 'Optional';
+      document.getElementById('mqtt-password-clear').checked = false;
+      document.getElementById('mqtt-interval').value = d.interval_seconds || 30;
+      document.getElementById('mqtt-ha-enabled').checked = !!d.home_assistant_discovery;
+      document.getElementById('mqtt-ha-prefix').value = d.discovery_prefix || 'homeassistant';
+      var topic = d.base_topic || '…';
+      document.getElementById('mqtt-topics-help').textContent =
+        'State: ' + topic + '/state · commands: ' + topic + '/command/#';
+      document.getElementById('mqtt-save').disabled = true;
+    }
+
+    function loadMqtt() {
+      apiFetch('/api/mqtt').then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      }).then(renderMqttState).catch(function () {
+        var badge = document.getElementById('mqtt-badge');
+        badge.className = 'badge badge-danger'; badge.textContent = 'Unavailable';
+      });
+    }
+
+    ['mqtt-enabled', 'mqtt-uri', 'mqtt-topic', 'mqtt-user', 'mqtt-password',
+     'mqtt-password-clear', 'mqtt-interval', 'mqtt-ha-enabled', 'mqtt-ha-prefix'].forEach(function (id) {
+      var element = document.getElementById(id);
+      element.addEventListener(element.type === 'checkbox' ? 'change' : 'input', function () {
+        document.getElementById('mqtt-save').disabled = false;
+      });
+    });
+    document.getElementById('mqtt-reload').addEventListener('click', loadMqtt);
+    document.getElementById('mqtt-publish').addEventListener('click', function () {
+      var btn = this; btn.disabled = true;
+      apiFetch('/api/mqtt/publish', { method: 'POST' })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          showToast(d.ok ? 'success' : 'warning', d.ok ? 'Status queued' : 'MQTT offline',
+                    d.ok ? 'The current state will be published.' : 'Connect the broker first.', 4000);
+        }).catch(function () { showToast('error', 'Publish failed', '', 4000); })
+        .finally(function () { btn.disabled = false; });
+    });
+    document.getElementById('mqtt-save').addEventListener('click', function () {
+      var btn = this;
+      var body = {
+        enabled: document.getElementById('mqtt-enabled').checked,
+        uri: document.getElementById('mqtt-uri').value.trim(),
+        username: document.getElementById('mqtt-user').value,
+        base_topic: document.getElementById('mqtt-topic').value.trim().replace(/\/+$/, ''),
+        interval_seconds: parseInt(document.getElementById('mqtt-interval').value, 10),
+        home_assistant_discovery: document.getElementById('mqtt-ha-enabled').checked,
+        discovery_prefix: document.getElementById('mqtt-ha-prefix').value.trim().replace(/\/+$/, ''),
+        clear_password: document.getElementById('mqtt-password-clear').checked
+      };
+      var password = document.getElementById('mqtt-password').value;
+      if (password) body.password = password;
+      if (body.enabled && !/^(mqtts?|wss?):\/\//.test(body.uri)) {
+        showToast('error', 'Invalid broker URI', 'Use mqtt://, mqtts://, ws:// or wss://.', 5000);
+        return;
+      }
+      if (!body.base_topic || /[#+]/.test(body.base_topic)) {
+        showToast('error', 'Invalid base topic', 'Enter a topic without MQTT wildcards.', 5000);
+        return;
+      }
+      if (!(body.interval_seconds >= 5 && body.interval_seconds <= 3600)) {
+        showToast('error', 'Invalid interval', 'Use 5–3600 seconds.', 5000);
+        return;
+      }
+      btn.disabled = true; btn.textContent = 'Saving…';
+      apiFetch('/api/mqtt', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      }).then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      }).then(function () {
+        btn.textContent = 'Save';
+        showToast('success', 'MQTT saved', 'The connection is being applied live.', 4000);
+        setTimeout(loadMqtt, 800);
+      }).catch(function (e) {
+        btn.textContent = 'Save'; btn.disabled = false;
+        showToast('error', 'MQTT save failed', e.message || '', 5000);
+      });
+    });
+
     function loadSystem() {
+      loadMqtt();
       apiFetch('/api/system')
         .then(function (r) { return r.json(); })
         .then(function (d) {
@@ -6632,14 +6942,14 @@
 
     /* Pull every config-bearing GET endpoint and merge into one JSON
      * file the operator can download. WiFi/AP/EAP passwords + Tailscale
-     * auth key are pulled via /api/system/secrets and encrypted with the
+     * auth key and MQTT password are pulled via /api/system/secrets and encrypted with the
      * operator passphrase before being spliced into the backup as
      * `secrets_encrypted`. With Include secrets unchecked the file lands
      * secret-free, same as before. */
     document.getElementById('sys-config-backup').addEventListener('click', function () {
       showConfirm(
         'Download config backup',
-        '<p style="margin:0 0 0.75rem 0;">Secrets (WiFi/AP/EAP passwords + Tailscale auth key) are encrypted with your passphrase. You need the same passphrase to restore them on this or another device.</p>' +
+        '<p style="margin:0 0 0.75rem 0;">Secrets (WiFi/AP/EAP/MQTT passwords + Tailscale auth key) are encrypted with your passphrase. You need the same passphrase to restore them on this or another device.</p>' +
         '<label style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.75rem; cursor:pointer;">' +
           '<input type="checkbox" id="backup-include-secrets" checked> Include encrypted secrets' +
         '</label>' +
@@ -6691,7 +7001,9 @@
         apiFetch('/api/dhcp/reservations') .then(function (r) { return r.json(); }),
         apiFetch('/api/portmap')           .then(function (r) { return r.json(); }),
         apiFetch('/api/tailscale')         .then(function (r) { return r.json(); }),
-        apiFetch('/api/firewall')          .then(function (r) { return r.json(); })
+        apiFetch('/api/firewall')          .then(function (r) { return r.json(); }),
+        apiFetch('/api/wol')               .then(function (r) { return r.json(); }),
+        apiFetch('/api/mqtt')              .then(function (r) { return r.json(); })
       ];
       if (includeSecrets) {
         fetches.push(apiFetch('/api/system/secrets').then(function (r) {
@@ -6714,6 +7026,9 @@
         var ts = parts[4] || {};
         delete ts.peers;
         delete ts.runtime;
+        var mqtt = parts[7] || {};
+        delete mqtt.connected;
+        delete mqtt.has_password;
         var backup = {
           format:        'tsr-backup-v1',
           exported_at:   new Date().toISOString(),
@@ -6723,11 +7038,13 @@
           dhcp_reservations: (parts[2] && parts[2].reservations) || [],
           portmap:       (parts[3] && parts[3].mappings) || [],
           tailscale:     ts,
-          firewall:      parts[5] || {}
+          firewall:      parts[5] || {},
+          wol:           (parts[6] && parts[6].devices) || [],
+          mqtt:          mqtt
         };
         var step = Promise.resolve();
         if (includeSecrets) {
-          var secrets = parts[6] || {};
+          var secrets = parts[8] || {};
           step = encryptSecretsBundle(secrets, passphrase).then(function (enc) {
             backup.secrets_encrypted = enc;
           });
@@ -6782,7 +7099,7 @@
           '<p style="margin:0 0 0.75rem 0;">Replaces networks, AP settings, DHCP reservations, port mappings, Tailscale settings and system block.</p>' +
           (hasSecrets
             ? '<label style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.75rem; cursor:pointer;">' +
-                '<input type="checkbox" id="restore-include-secrets" checked> Decrypt and restore encrypted secrets (WiFi/AP passwords + Tailscale auth key)' +
+                '<input type="checkbox" id="restore-include-secrets" checked> Decrypt and restore encrypted secrets (WiFi/AP/MQTT passwords + Tailscale auth key)' +
               '</label>' +
               '<div id="restore-passphrase-block">' +
                 '<div class="form-group">' +
@@ -6834,6 +7151,7 @@
 
       var steps = [];
       if (data.network) steps.push({ name: 'network',           url: '/api/network',           body: data.network });
+      if (data.wol) steps.push({ name: 'Wake-on-LAN', url: '/api/wol', body: { devices: data.wol } });
       if (data.dhcp_reservations) steps.push({ name: 'reservations',    url: '/api/dhcp/reservations', body: { reservations: data.dhcp_reservations } });
       if (data.portmap)           steps.push({ name: 'portmap',         url: '/api/portmap',           body: { mappings:     data.portmap } });
       if (data.system) {
@@ -6851,6 +7169,7 @@
         delete ts.auth_key;  /* secret only restored via the encrypted block */
         steps.push({ name: 'tailscale', url: '/api/tailscale', body: { settings: ts } });
       }
+      if (data.mqtt) steps.push({ name: 'MQTT', url: '/api/mqtt', body: data.mqtt });
 
       /* Firewall — backup includes every list's rules, but until now the
        * restore flow silently dropped them. Re-apply by clearing each

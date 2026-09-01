@@ -31,6 +31,8 @@
 #include "sdlog.h"
 #include "net_diag.h"
 #include "wifi_networks.h"
+#include "wol.h"
+#include "mqtt_integration.h"
 #include "dhcp_reservations.h"
 #include "dhcps_ext.h"
 #include "portmap.h"
@@ -67,6 +69,9 @@ extern int ap_connect;
 extern int connect_count;
 extern void wifi_sta_pause_for_scan(void);
 extern void wifi_sta_resume_after_scan(void);
+extern bool wifi_ap_policy_auto_off(void);
+extern bool wifi_ap_runtime_enabled(void);
+extern void wifi_ap_policy_set_auto_off(bool auto_off);
 
 static const char *TAG = "web_ui";
 
@@ -316,6 +321,8 @@ static esp_err_t status_handler(httpd_req_t *req)
 
     /* AP (downlink) — SSID + channel from live wifi_config, MAC, clients, IP. */
     cJSON *ap = cJSON_CreateObject();
+    cJSON_AddBoolToObject(ap, "enabled", wifi_ap_runtime_enabled());
+    cJSON_AddBoolToObject(ap, "auto_off_when_connected", wifi_ap_policy_auto_off());
     cJSON_AddNumberToObject(ap, "clients", connect_count);
     wifi_config_t ap_cfg;
     if (esp_wifi_get_config(WIFI_IF_AP, &ap_cfg) == ESP_OK) {
@@ -508,6 +515,8 @@ static esp_err_t network_handler(httpd_req_t *req)
 
     /* AP — same omit-rule on the password. */
     cJSON *ap = cJSON_CreateObject();
+    cJSON_AddBoolToObject(ap, "enabled", wifi_ap_runtime_enabled());
+    cJSON_AddBoolToObject(ap, "auto_off_when_connected", wifi_ap_policy_auto_off());
     add_nvs_string(ap, "ssid", "ap_ssid");
     /* Report the LIVE AP channel (read-only in the UI). On the single-radio
      * ESP32-S3 the AP follows the uplink channel automatically, so there is
@@ -1040,6 +1049,13 @@ static esp_err_t network_save_handler(httpd_req_t *req)
         const cJSON *hidden_j = cJSON_GetObjectItem(ap, "hidden");
         if (cJSON_IsBool(hidden_j)) {
             nvs_save_u8("ap_hidden", cJSON_IsTrue(hidden_j) ? 1 : 0);
+        }
+        const cJSON *auto_off_j = cJSON_GetObjectItem(ap, "auto_off_when_connected");
+        if (cJSON_IsBool(auto_off_j)) {
+            bool auto_off = cJSON_IsTrue(auto_off_j);
+            esp_err_t policy_err = nvs_param_set_u8("ap_auto_off", auto_off ? 1 : 0);
+            nvs_save_record_err("ap_auto_off", policy_err);
+            if (policy_err == ESP_OK) wifi_ap_policy_set_auto_off(auto_off);
         }
 
         /* DNS relay — live apply (no restart needed; the forwarder
@@ -1809,6 +1825,263 @@ static bool parse_mac_str(const char *s, uint8_t out[6])
     }
     return true;
 }
+
+/* GET /api/wol — saved Wake-on-LAN address book. */
+static esp_err_t wol_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON *arr = cJSON_CreateArray();
+    if (!root || !arr) {
+        cJSON_Delete(root);
+        cJSON_Delete(arr);
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+
+    int count = wol_count();
+    for (int i = 0; i < count; i++) {
+        wol_device_t device;
+        if (!wol_get(i, &device)) continue;
+        char mac[18];
+        wol_format_mac(device.mac, mac);
+        cJSON *entry = cJSON_CreateObject();
+        cJSON_AddStringToObject(entry, "name", device.name);
+        cJSON_AddStringToObject(entry, "mac", mac);
+        cJSON_AddStringToObject(entry, "broadcast", device.broadcast);
+        cJSON_AddNumberToObject(entry, "port", device.port ? device.port : 9);
+        cJSON_AddItemToArray(arr, entry);
+    }
+    cJSON_AddNumberToObject(root, "max", WOL_MAX_DEVICES);
+    cJSON_AddItemToObject(root, "devices", arr);
+
+    char *body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!body) { httpd_resp_send_500(req); return ESP_FAIL; }
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, body);
+    free(body);
+    return err;
+}
+
+/* POST /api/wol — atomically replace the address book. */
+static esp_err_t wol_save_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    const size_t buf_size = 4096;
+    char *buf = malloc_body_buf(buf_size);
+    if (!buf) { httpd_resp_send_500(req); return ESP_FAIL; }
+    if (recv_body(req, buf, buf_size, NULL) != ESP_OK) { free(buf); return ESP_FAIL; }
+    cJSON *root = cJSON_Parse(buf);
+    free(buf);
+    if (!root) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid JSON");
+        return ESP_FAIL;
+    }
+    cJSON *arr = cJSON_GetObjectItem(root, "devices");
+    if (!cJSON_IsArray(arr)) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing devices[]");
+        return ESP_FAIL;
+    }
+
+    wol_device_t devices[WOL_MAX_DEVICES];
+    memset(devices, 0, sizeof devices);
+    int input_count = cJSON_GetArraySize(arr);
+    if (input_count > WOL_MAX_DEVICES) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "too many WOL devices");
+        return ESP_FAIL;
+    }
+    int count = 0;
+    for (int i = 0; i < input_count; i++) {
+        cJSON *entry = cJSON_GetArrayItem(arr, i);
+        cJSON *mac_j = cJSON_GetObjectItem(entry, "mac");
+        if (!cJSON_IsObject(entry) || !cJSON_IsString(mac_j)
+            || !wol_parse_mac(mac_j->valuestring, devices[count].mac)) {
+            cJSON_Delete(root);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid WOL MAC address");
+            return ESP_FAIL;
+        }
+        cJSON *name_j = cJSON_GetObjectItem(entry, "name");
+        cJSON *broadcast_j = cJSON_GetObjectItem(entry, "broadcast");
+        cJSON *port_j = cJSON_GetObjectItem(entry, "port");
+        if (cJSON_IsString(name_j)) strlcpy(devices[count].name, name_j->valuestring,
+                                           sizeof devices[count].name);
+        if (cJSON_IsString(broadcast_j) && broadcast_j->valuestring[0]) {
+            ip4_addr_t parsed;
+            if (!ip4addr_aton(broadcast_j->valuestring, &parsed)) {
+                cJSON_Delete(root);
+                httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid broadcast address");
+                return ESP_FAIL;
+            }
+            strlcpy(devices[count].broadcast, broadcast_j->valuestring,
+                    sizeof devices[count].broadcast);
+        }
+        int port = cJSON_IsNumber(port_j) ? port_j->valueint : 9;
+        if (port < 1 || port > 65535) {
+            cJSON_Delete(root);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid WOL UDP port");
+            return ESP_FAIL;
+        }
+        devices[count].port = (uint16_t)port;
+        devices[count].valid = 1;
+        count++;
+    }
+    cJSON_Delete(root);
+
+    esp_err_t err = wol_set_all(devices, count);
+    if (err == ESP_OK) mqtt_integration_wol_changed();
+    httpd_resp_set_type(req, "application/json");
+    if (err != ESP_OK) {
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"NVS write failed\"}");
+    }
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+/* POST /api/wol/send — send to a saved index or saved MAC. */
+static esp_err_t wol_send_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    char buf[160];
+    if (recv_body(req, buf, sizeof buf, NULL) != ESP_OK) return ESP_FAIL;
+    cJSON *root = cJSON_Parse(buf);
+    if (!root) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid JSON");
+        return ESP_FAIL;
+    }
+    cJSON *index_j = cJSON_GetObjectItem(root, "index");
+    cJSON *mac_j = cJSON_GetObjectItem(root, "mac");
+    esp_err_t err = ESP_ERR_INVALID_ARG;
+    if (cJSON_IsNumber(index_j)) err = wol_send_index(index_j->valueint);
+    else if (cJSON_IsString(mac_j)) err = wol_send_saved_mac_text(mac_j->valuestring);
+    cJSON_Delete(root);
+
+    httpd_resp_set_type(req, "application/json");
+    if (err != ESP_OK) {
+        httpd_resp_set_status(req, err == ESP_ERR_NOT_FOUND
+                                  ? "404 Not Found" : "503 Service Unavailable");
+        char response[96];
+        snprintf(response, sizeof response,
+                 "{\"ok\":false,\"error\":\"%s\"}", esp_err_to_name(err));
+        return httpd_resp_sendstr(req, response);
+    }
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+static const httpd_uri_t uri_wol = {
+    .uri = "/api/wol", .method = HTTP_GET, .handler = wol_handler,
+};
+static const httpd_uri_t uri_wol_save = {
+    .uri = "/api/wol", .method = HTTP_POST, .handler = wol_save_handler,
+};
+static const httpd_uri_t uri_wol_send = {
+    .uri = "/api/wol/send", .method = HTTP_POST, .handler = wol_send_handler,
+};
+
+/* GET/POST /api/mqtt — broker settings and live connection state. */
+static esp_err_t mqtt_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    mqtt_integration_config_t config;
+    mqtt_integration_get_config(&config);
+    cJSON *root = cJSON_CreateObject();
+    if (!root) { httpd_resp_send_500(req); return ESP_FAIL; }
+    cJSON_AddBoolToObject(root, "enabled", config.enabled);
+    cJSON_AddBoolToObject(root, "connected", mqtt_integration_connected());
+    cJSON_AddStringToObject(root, "uri", config.uri);
+    cJSON_AddStringToObject(root, "username", config.username);
+    cJSON_AddBoolToObject(root, "has_password", config.password[0] != '\0');
+    cJSON_AddStringToObject(root, "base_topic", config.base_topic);
+    cJSON_AddBoolToObject(root, "home_assistant_discovery",
+                          config.home_assistant_discovery);
+    cJSON_AddStringToObject(root, "discovery_prefix", config.discovery_prefix);
+    cJSON_AddNumberToObject(root, "interval_seconds", config.interval_seconds);
+    char *body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!body) { httpd_resp_send_500(req); return ESP_FAIL; }
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, body);
+    free(body);
+    return err;
+}
+
+static esp_err_t mqtt_save_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    char *buf = malloc_body_buf(3072);
+    if (!buf) { httpd_resp_send_500(req); return ESP_FAIL; }
+    if (recv_body(req, buf, 3072, NULL) != ESP_OK) { free(buf); return ESP_FAIL; }
+    cJSON *root = cJSON_Parse(buf);
+    free(buf);
+    if (!root) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid JSON");
+        return ESP_FAIL;
+    }
+    mqtt_integration_config_t config;
+    mqtt_integration_get_config(&config);
+    cJSON *item;
+#define COPY_MQTT_STRING(json_key, field) do { \
+        item = cJSON_GetObjectItem(root, (json_key)); \
+        if (cJSON_IsString(item)) strlcpy((field), item->valuestring, sizeof(field)); \
+    } while (0)
+    COPY_MQTT_STRING("uri", config.uri);
+    COPY_MQTT_STRING("username", config.username);
+    COPY_MQTT_STRING("base_topic", config.base_topic);
+    COPY_MQTT_STRING("discovery_prefix", config.discovery_prefix);
+    item = cJSON_GetObjectItem(root, "password");
+    if (cJSON_IsString(item) && item->valuestring[0])
+        strlcpy(config.password, item->valuestring, sizeof config.password);
+    item = cJSON_GetObjectItem(root, "clear_password");
+    if (cJSON_IsTrue(item)) config.password[0] = '\0';
+#undef COPY_MQTT_STRING
+    item = cJSON_GetObjectItem(root, "enabled");
+    if (cJSON_IsBool(item)) config.enabled = cJSON_IsTrue(item);
+    item = cJSON_GetObjectItem(root, "home_assistant_discovery");
+    if (cJSON_IsBool(item)) config.home_assistant_discovery = cJSON_IsTrue(item);
+    item = cJSON_GetObjectItem(root, "interval_seconds");
+    if (cJSON_IsNumber(item)) config.interval_seconds = (uint16_t)item->valueint;
+    cJSON_Delete(root);
+
+    bool valid_uri = !config.enabled
+        || strncmp(config.uri, "mqtt://", 7) == 0
+        || strncmp(config.uri, "mqtts://", 8) == 0
+        || strncmp(config.uri, "ws://", 5) == 0
+        || strncmp(config.uri, "wss://", 6) == 0;
+    if (!valid_uri || !config.base_topic[0] || strchr(config.base_topic, '#')
+        || strchr(config.base_topic, '+') || config.interval_seconds < 5
+        || config.interval_seconds > 3600) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid MQTT settings");
+        return ESP_FAIL;
+    }
+    esp_err_t err = mqtt_integration_set_config(&config);
+    httpd_resp_set_type(req, "application/json");
+    if (err != ESP_OK) {
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"save failed\"}");
+    }
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+static const httpd_uri_t uri_mqtt = {
+    .uri = "/api/mqtt", .method = HTTP_GET, .handler = mqtt_handler,
+};
+static const httpd_uri_t uri_mqtt_save = {
+    .uri = "/api/mqtt", .method = HTTP_POST, .handler = mqtt_save_handler,
+};
+static esp_err_t mqtt_publish_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    mqtt_integration_publish_now();
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, mqtt_integration_connected()
+                                   ? "{\"ok\":true}" : "{\"ok\":false,\"connected\":false}");
+}
+static const httpd_uri_t uri_mqtt_publish = {
+    .uri = "/api/mqtt/publish", .method = HTTP_POST, .handler = mqtt_publish_handler,
+};
 
 static esp_err_t dhcp_reservations_handler(httpd_req_t *req)
 {
@@ -3394,6 +3667,11 @@ static esp_err_t system_secrets_get_handler(httpd_req_t *req)
         cJSON_AddStringToObject(root, "ap_password", s ? s : "");
         free(s);
     }
+    {
+        char *s = nvs_param_get_str("mqtt_pass");
+        cJSON_AddStringToObject(root, "mqtt_password", s ? s : "");
+        free(s);
+    }
 
     /* Full network table including PSK + EAP credentials. Mirrors the
      * wifi_network_t layout so a round-trip restore reproduces the
@@ -3453,6 +3731,7 @@ static esp_err_t system_secrets_post_handler(httpd_req_t *req)
 
     save_str_if_present(root, "auth_key",    "ts_authkey");
     save_str_if_present(root, "ap_password", "ap_passwd");
+    save_str_if_present(root, "mqtt_password", "mqtt_pass");
 
     /* Network array — only rewrite NVS when the client actually sent one,
      * so a partial restore (e.g. just the auth_key) doesn't wipe the
@@ -4436,7 +4715,7 @@ void web_ui_init(void)
      * instead of WebCrypto's ~100 ms. */
     httpd_config_t conf           = HTTPD_DEFAULT_CONFIG();
     conf.uri_match_fn             = httpd_uri_match_wildcard;
-    conf.max_uri_handlers         = 58;
+    conf.max_uri_handlers         = 68;
     conf.stack_size               = 12288;
     /* The HTTP server needs three lwIP sockets internally. Older ESP-IDF
      * releases cap CONFIG_LWIP_MAX_SOCKETS at 16 and silently replace an
@@ -4468,6 +4747,12 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_network_save);
     httpd_register_uri_handler(server, &uri_network_scan);
     httpd_register_uri_handler(server, &uri_network_scan_result);
+    httpd_register_uri_handler(server, &uri_wol);
+    httpd_register_uri_handler(server, &uri_wol_save);
+    httpd_register_uri_handler(server, &uri_wol_send);
+    httpd_register_uri_handler(server, &uri_mqtt);
+    httpd_register_uri_handler(server, &uri_mqtt_save);
+    httpd_register_uri_handler(server, &uri_mqtt_publish);
     httpd_register_uri_handler(server, &uri_tools_route);
     httpd_register_uri_handler(server, &uri_tools_ping);
     httpd_register_uri_handler(server, &uri_tools_trace);

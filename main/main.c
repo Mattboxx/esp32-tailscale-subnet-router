@@ -50,6 +50,8 @@
 #include "nvs.h"
 #include "dns_relay.h"
 #include "wifi_networks.h"
+#include "wol.h"
+#include "mqtt_integration.h"
 #include "dhcp_reservations.h"
 #include "portmap.h"
 #include "mac_deny.h"
@@ -148,6 +150,99 @@ static int s_net_retries = 0;
  * connecting.  Suppress the DISCONNECTED handler's immediate reconnect
  * until the scan-done callback explicitly resumes normal operation. */
 static volatile bool s_manual_scan_active = false;
+
+/* Access-point policy.  The legacy behaviour (default) keeps AP+STA up
+ * permanently.  Recovery-only mode drops the AP after the uplink obtains an
+ * address, but brings it back whenever STA disconnects so a bad credential or
+ * upstream outage never locks the operator out of the device. */
+static volatile bool     s_ap_auto_off = false;
+static volatile bool     s_ap_target_on = true;
+static volatile uint32_t s_ap_policy_generation = 0;
+
+static void ap_policy_apply_runtime(bool on)
+{
+    wifi_mode_t mode = WIFI_MODE_NULL;
+    if (esp_wifi_get_mode(&mode) != ESP_OK) return;
+
+    if (on) {
+        if (mode == WIFI_MODE_APSTA || mode == WIFI_MODE_AP) return;
+
+        /* Starting the AP from a fully-stopped state is the safe moment to
+         * align it to the current/last uplink channel (unlike retuning a live
+         * AP, which breaks the NAT path in this firmware). */
+        wifi_config_t ap_cfg;
+        if (esp_wifi_get_config(WIFI_IF_AP, &ap_cfg) == ESP_OK) {
+            wifi_ap_record_t sta_ap;
+            int32_t learned = 0;
+            uint8_t channel = 0;
+            if (esp_wifi_sta_get_ap_info(&sta_ap) == ESP_OK) channel = sta_ap.primary;
+            else if (nvs_param_get_int("ap_chan_learned", &learned) == ESP_OK
+                     && learned >= 1 && learned <= 13) channel = (uint8_t)learned;
+            if (channel) ap_cfg.ap.channel = channel;
+            (void)esp_wifi_set_config(WIFI_IF_AP, &ap_cfg);
+        }
+
+        esp_err_t err = esp_wifi_set_mode(WIFI_MODE_APSTA);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG_AP, "AP recovery enable failed: %s", esp_err_to_name(err));
+            return;
+        }
+        vTaskDelay(pdMS_TO_TICKS(200));
+        esp_netif_t *ap  = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+        esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+        if (ap) (void)esp_netif_napt_enable(ap);
+        if (ap && sta) softap_set_dns_addr(ap, sta);
+        ESP_LOGW(TAG_AP, "AP enabled (recovery/always-on policy)");
+    } else {
+        if (mode == WIFI_MODE_STA) return;
+        esp_err_t err = esp_wifi_set_mode(WIFI_MODE_STA);
+        if (err == ESP_OK) ESP_LOGW(TAG_AP, "AP disabled: uplink connected (recovery-only policy)");
+        else ESP_LOGE(TAG_AP, "AP auto-disable failed: %s", esp_err_to_name(err));
+    }
+}
+
+static void ap_policy_worker(void *arg)
+{
+    uint32_t generation = (uint32_t)(uintptr_t)arg;
+    bool target = s_ap_target_on;
+    /* Give an AP-hosted browser enough time to receive the Save response;
+     * recovery enable is intentionally much faster. */
+    vTaskDelay(pdMS_TO_TICKS(target ? 100 : 1500));
+    if (generation == s_ap_policy_generation && target == s_ap_target_on) {
+        ap_policy_apply_runtime(target);
+    }
+    vTaskDelete(NULL);
+}
+
+static void ap_policy_request(bool on)
+{
+    s_ap_target_on = on;
+    uint32_t generation = ++s_ap_policy_generation;
+    /* esp_wifi_set_mode() synchronously fans out through the Wi-Fi/IP event
+     * handlers. On ESP-IDF 5.3 that path peaks well above 3 KB (the first
+     * recovery-only build reproducibly tripped the FreeRTOS stack canary just
+     * after the AP-down event). Keep this one-shot worker deliberately roomy;
+     * it exists for at most 1.5 s and is freed after the transition. */
+    if (xTaskCreate(ap_policy_worker, "ap_policy", 8192,
+                    (void *)(uintptr_t)generation, 5, NULL) != pdPASS) {
+        ESP_LOGE(TAG_AP, "could not create AP policy worker");
+    }
+}
+
+bool wifi_ap_policy_auto_off(void) { return s_ap_auto_off; }
+
+bool wifi_ap_runtime_enabled(void)
+{
+    wifi_mode_t mode = WIFI_MODE_NULL;
+    return esp_wifi_get_mode(&mode) == ESP_OK
+        && (mode == WIFI_MODE_AP || mode == WIFI_MODE_APSTA);
+}
+
+void wifi_ap_policy_set_auto_off(bool auto_off)
+{
+    s_ap_auto_off = auto_off;
+    ap_policy_request(!auto_off || !ap_connect);
+}
 
 void wifi_sta_pause_for_scan(void)
 {
@@ -340,6 +435,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
         }
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         ap_connect = 0;
+        if (s_ap_auto_off) ap_policy_request(true);
         if (s_manual_scan_active) {
             ESP_LOGI(TAG_STA, "STA reconnect paused for manual scan");
             return;
@@ -402,6 +498,9 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
                 if (nvs_param_get_int("ap_realign_cnt", &rc) == ESP_OK && rc != 0) {
                     (void)nvs_param_set_int("ap_realign_cnt", 0);
                 }
+            } else if (s_ap_auto_off) {
+                ESP_LOGI(TAG_AP, "STA ch%u != AP ch%u; recovery-only AP will stop without reboot",
+                         (unsigned)ap_info.primary, (unsigned)ap_cfg.ap.channel);
             } else {
                 int32_t rc = 0;
                 (void)nvs_param_get_int("ap_realign_cnt", &rc);
@@ -446,6 +545,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
          * STA IP. portmap_install_all is idempotent — duplicate bindings
          * are cleared before the re-add. */
         portmap_install_all();
+        if (s_ap_auto_off) ap_policy_request(false);
     }
 }
 
@@ -847,6 +947,13 @@ void app_main(void)
      * accessor is lazy too, but doing it explicitly here makes setup-mode
      * state deterministic before any WiFi event can run. */
     wifi_networks_init();
+    {
+        uint8_t auto_off = 0;
+        (void)nvs_param_get_u8("ap_auto_off", &auto_off);
+        s_ap_auto_off = auto_off != 0;
+        ESP_LOGI(TAG_AP, "AP policy: %s",
+                 s_ap_auto_off ? "recovery-only (off while uplink is up)" : "always on");
+    }
 
     /*Initialize WiFi */
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -923,6 +1030,8 @@ void app_main(void)
      * ready before the AP netif starts handing out leases. The
      * matching DHCP-server hook lives in components/dhcpserver/. */
     dhcp_reservations_init();
+    wol_init();
+    mqtt_integration_init();
 
     /* Apply POSIX timezone before SNTP runs — so the first time-of-day
      * print after the first sync renders in local time. Empty NVS value

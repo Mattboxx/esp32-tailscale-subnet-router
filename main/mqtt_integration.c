@@ -1,0 +1,449 @@
+/* MQTT status/command bridge with native Home Assistant discovery. */
+#include "mqtt_integration.h"
+
+#include <ctype.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "cJSON.h"
+#include "esp_crt_bundle.h"
+#include "esp_event.h"
+#include "esp_heap_caps.h"
+#include "esp_log.h"
+#include "esp_mac.h"
+#include "esp_netif.h"
+#include "esp_system.h"
+#include "esp_timer.h"
+#include "esp_wifi.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
+#include "lwip/ip4_addr.h"
+#include "mqtt_client.h"
+#include "nvs_params.h"
+#include "tailscale_config.h"
+#include "wol.h"
+
+static const char *TAG = "mqtt_bridge";
+static mqtt_integration_config_t s_config;
+static SemaphoreHandle_t s_lock;
+static TaskHandle_t s_manager_task;
+static esp_mqtt_client_handle_t s_client;
+static volatile bool s_connected;
+static volatile bool s_publish_requested;
+static volatile bool s_discovery_requested;
+static char s_device_id[24];
+static char s_availability_topic[128];
+static char s_state_topic[128];
+
+extern bool wifi_ap_policy_auto_off(void);
+extern bool wifi_ap_runtime_enabled(void);
+extern void wifi_ap_policy_set_auto_off(bool auto_off);
+
+static void config_defaults(mqtt_integration_config_t *config)
+{
+    memset(config, 0, sizeof *config);
+    config->interval_seconds = 30;
+    strlcpy(config->discovery_prefix, "homeassistant", sizeof config->discovery_prefix);
+    uint8_t mac[6] = {0};
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    snprintf(s_device_id, sizeof s_device_id, "esp32_router_%02x%02x%02x",
+             mac[3], mac[4], mac[5]);
+    snprintf(config->base_topic, sizeof config->base_topic, "esp32-router/%02x%02x%02x",
+             mac[3], mac[4], mac[5]);
+}
+
+static void load_string(const char *key, char *destination, size_t size)
+{
+    char *value = nvs_param_get_str(key);
+    if (value) {
+        strlcpy(destination, value, size);
+        free(value);
+    }
+}
+
+static void load_config(void)
+{
+    config_defaults(&s_config);
+    uint8_t flag = 0;
+    if (nvs_param_get_u8("mqtt_en", &flag) == ESP_OK) s_config.enabled = flag != 0;
+    if (nvs_param_get_u8("mqtt_ha", &flag) == ESP_OK) s_config.home_assistant_discovery = flag != 0;
+    uint16_t interval = 0;
+    if (nvs_param_get_u16("mqtt_int", &interval) == ESP_OK && interval >= 5)
+        s_config.interval_seconds = interval;
+    load_string("mqtt_uri", s_config.uri, sizeof s_config.uri);
+    load_string("mqtt_user", s_config.username, sizeof s_config.username);
+    load_string("mqtt_pass", s_config.password, sizeof s_config.password);
+    load_string("mqtt_topic", s_config.base_topic, sizeof s_config.base_topic);
+    load_string("mqtt_hapfx", s_config.discovery_prefix, sizeof s_config.discovery_prefix);
+}
+
+static int publish(const char *topic, const char *payload, int retain)
+{
+    if (!s_client || !s_connected) return -1;
+    return esp_mqtt_client_publish(s_client, topic, payload ? payload : "", 0, 1, retain);
+}
+
+static void add_device(cJSON *root)
+{
+    cJSON *device = cJSON_AddObjectToObject(root, "device");
+    cJSON *ids = cJSON_AddArrayToObject(device, "identifiers");
+    cJSON_AddItemToArray(ids, cJSON_CreateString(s_device_id));
+    cJSON_AddStringToObject(device, "name", "ESP32 Tailscale Router");
+    cJSON_AddStringToObject(device, "manufacturer", "Espressif");
+    cJSON_AddStringToObject(device, "model", "ESP32-S3 Tailscale subnet router");
+}
+
+static void discovery_publish_entity(const char *domain, const char *object_id,
+                                     const char *name, const char *state_topic,
+                                     const char *value_template,
+                                     const char *command_topic,
+                                     const char *device_class, const char *unit)
+{
+    mqtt_integration_config_t cfg;
+    mqtt_integration_get_config(&cfg);
+    char topic[256];
+    snprintf(topic, sizeof topic, "%s/%s/%s/%s/config", cfg.discovery_prefix,
+             domain, s_device_id, object_id);
+    cJSON *root = cJSON_CreateObject();
+    if (!root) return;
+    char unique_id[96];
+    snprintf(unique_id, sizeof unique_id, "%s_%s", s_device_id, object_id);
+    cJSON_AddStringToObject(root, "name", name);
+    cJSON_AddStringToObject(root, "unique_id", unique_id);
+    if (state_topic) cJSON_AddStringToObject(root, "state_topic", state_topic);
+    if (value_template) cJSON_AddStringToObject(root, "value_template", value_template);
+    if (command_topic) cJSON_AddStringToObject(root, "command_topic", command_topic);
+    if (device_class) cJSON_AddStringToObject(root, "device_class", device_class);
+    if (unit) cJSON_AddStringToObject(root, "unit_of_measurement", unit);
+    cJSON_AddStringToObject(root, "availability_topic", s_availability_topic);
+    cJSON_AddStringToObject(root, "payload_available", "online");
+    cJSON_AddStringToObject(root, "payload_not_available", "offline");
+    add_device(root);
+    char *json = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (json) {
+        publish(topic, json, 1);
+        free(json);
+    }
+}
+
+static void normalized_mac(const uint8_t mac[6], char out[13])
+{
+    snprintf(out, 13, "%02x%02x%02x%02x%02x%02x",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
+
+static void publish_discovery(void)
+{
+    mqtt_integration_config_t cfg;
+    mqtt_integration_get_config(&cfg);
+    if (!cfg.home_assistant_discovery || !cfg.discovery_prefix[0]) return;
+
+    char command[160];
+    discovery_publish_entity("binary_sensor", "uplink", "Uplink", s_state_topic,
+                             "{{ value_json.uplink_connected }}", NULL,
+                             "connectivity", NULL);
+    discovery_publish_entity("sensor", "uplink_ip", "Uplink IP", s_state_topic,
+                             "{{ value_json.uplink_ip }}", NULL, NULL, NULL);
+    discovery_publish_entity("sensor", "wifi_rssi", "WiFi signal", s_state_topic,
+                             "{{ value_json.rssi }}", NULL, "signal_strength", "dBm");
+    discovery_publish_entity("binary_sensor", "tailscale", "Tailscale", s_state_topic,
+                             "{{ value_json.tailscale_connected }}", NULL,
+                             "connectivity", NULL);
+    discovery_publish_entity("sensor", "tailscale_ip", "Tailscale IP", s_state_topic,
+                             "{{ value_json.tailscale_ip }}", NULL, NULL, NULL);
+    discovery_publish_entity("sensor", "free_heap", "Free heap", s_state_topic,
+                             "{{ value_json.free_heap }}", NULL, NULL, "B");
+
+    snprintf(command, sizeof command, "%s/command/ap_always_on", cfg.base_topic);
+    discovery_publish_entity("switch", "ap_always_on", "Access point always on",
+                             s_state_topic, "{{ value_json.ap_always_on }}", command,
+                             NULL, NULL);
+    snprintf(command, sizeof command, "%s/command/restart", cfg.base_topic);
+    discovery_publish_entity("button", "restart", "Restart", NULL, NULL, command,
+                             "restart", NULL);
+
+    int count = wol_count();
+    for (int i = 0; i < count; i++) {
+        wol_device_t device;
+        if (!wol_get(i, &device)) continue;
+        char mac[13];
+        normalized_mac(device.mac, mac);
+        char object_id[32];
+        snprintf(object_id, sizeof object_id, "wol_%s", mac);
+        snprintf(command, sizeof command, "%s/command/wol/%s", cfg.base_topic, mac);
+        char name[64];
+        snprintf(name, sizeof name, "Wake %s", device.name[0] ? device.name : mac);
+        discovery_publish_entity("button", object_id, name, NULL, NULL, command,
+                                 "restart", NULL);
+    }
+    ESP_LOGI(TAG, "Home Assistant discovery published (%d WOL button(s))", count);
+}
+
+static void publish_state(void)
+{
+    if (!s_connected) return;
+    cJSON *root = cJSON_CreateObject();
+    if (!root) return;
+
+    bool uplink = false;
+    char uplink_ip[16] = "";
+    char ssid[33] = "";
+    int rssi = 0;
+    esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    esp_netif_ip_info_t ip = {0};
+    if (sta && esp_netif_get_ip_info(sta, &ip) == ESP_OK && ip.ip.addr) {
+        uplink = true;
+        snprintf(uplink_ip, sizeof uplink_ip, IPSTR, IP2STR(&ip.ip));
+        wifi_ap_record_t record;
+        if (esp_wifi_sta_get_ap_info(&record) == ESP_OK) {
+            strlcpy(ssid, (const char *)record.ssid, sizeof ssid);
+            rssi = record.rssi;
+        }
+    }
+    bool ts_connected = tailscale_is_connected();
+    char ts_ip[16] = "";
+    if (tailscale_tunnel_ip) {
+        ip4_addr_t address = { .addr = tailscale_tunnel_ip };
+        snprintf(ts_ip, sizeof ts_ip, IPSTR, IP2STR(&address));
+    }
+    wifi_sta_list_t clients = {0};
+    int client_count = 0;
+    if (wifi_ap_runtime_enabled() && esp_wifi_ap_get_sta_list(&clients) == ESP_OK)
+        client_count = clients.num;
+
+    cJSON_AddStringToObject(root, "uplink_connected", uplink ? "ON" : "OFF");
+    cJSON_AddStringToObject(root, "uplink_ip", uplink_ip);
+    cJSON_AddStringToObject(root, "ssid", ssid);
+    cJSON_AddNumberToObject(root, "rssi", rssi);
+    cJSON_AddStringToObject(root, "tailscale_connected", ts_connected ? "ON" : "OFF");
+    cJSON_AddStringToObject(root, "tailscale_ip", ts_ip);
+    cJSON_AddStringToObject(root, "ap_enabled", wifi_ap_runtime_enabled() ? "ON" : "OFF");
+    cJSON_AddStringToObject(root, "ap_always_on", wifi_ap_policy_auto_off() ? "OFF" : "ON");
+    cJSON_AddNumberToObject(root, "ap_clients", client_count);
+    cJSON_AddNumberToObject(root, "uptime_seconds", esp_timer_get_time() / 1000000ULL);
+    cJSON_AddNumberToObject(root, "free_heap", esp_get_free_heap_size());
+
+    char *json = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (json) {
+        publish(s_state_topic, json, 1);
+        free(json);
+    }
+}
+
+static void delayed_restart(void *arg)
+{
+    (void)arg;
+    vTaskDelay(pdMS_TO_TICKS(750));
+    esp_restart();
+}
+
+static bool payload_is_on(const char *payload)
+{
+    return strcasecmp(payload, "ON") == 0 || strcmp(payload, "1") == 0
+        || strcasecmp(payload, "true") == 0;
+}
+
+static void handle_command(const char *topic, const char *payload)
+{
+    mqtt_integration_config_t cfg;
+    mqtt_integration_get_config(&cfg);
+    char prefix[128];
+    snprintf(prefix, sizeof prefix, "%s/command/", cfg.base_topic);
+    if (strncmp(topic, prefix, strlen(prefix)) != 0) return;
+    const char *command = topic + strlen(prefix);
+    ESP_LOGI(TAG, "command: %s", command);
+    if (strcmp(command, "status") == 0) {
+        publish_state();
+    } else if (strcmp(command, "restart") == 0) {
+        xTaskCreate(delayed_restart, "mqtt_restart", 2048, NULL, 4, NULL);
+    } else if (strcmp(command, "ap_always_on") == 0) {
+        bool always_on = payload_is_on(payload);
+        if (nvs_param_set_u8("ap_auto_off", always_on ? 0 : 1) == ESP_OK) {
+            wifi_ap_policy_set_auto_off(!always_on);
+            publish_state();
+        }
+    } else if (strncmp(command, "wol/", 4) == 0) {
+        const char *compact = command + 4;
+        char mac[18];
+        if (strlen(compact) == 12) {
+            snprintf(mac, sizeof mac, "%.2s:%.2s:%.2s:%.2s:%.2s:%.2s",
+                     compact, compact + 2, compact + 4, compact + 6, compact + 8,
+                     compact + 10);
+            (void)wol_send_saved_mac_text(mac);
+        } else {
+            (void)wol_send_saved_mac_text(compact);
+        }
+    }
+}
+
+static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
+                               int32_t event_id, void *event_data)
+{
+    (void)handler_args;
+    (void)base;
+    esp_mqtt_event_handle_t event = event_data;
+    if (event_id == MQTT_EVENT_CONNECTED) {
+        s_connected = true;
+        mqtt_integration_config_t cfg;
+        mqtt_integration_get_config(&cfg);
+        char command_topic[128];
+        snprintf(command_topic, sizeof command_topic, "%s/command/#", cfg.base_topic);
+        esp_mqtt_client_subscribe(event->client, command_topic, 1);
+        publish(s_availability_topic, "online", 1);
+        publish_discovery();
+        publish_state();
+        ESP_LOGI(TAG, "connected; subscribed to %s", command_topic);
+    } else if (event_id == MQTT_EVENT_DISCONNECTED) {
+        s_connected = false;
+        ESP_LOGW(TAG, "disconnected");
+    } else if (event_id == MQTT_EVENT_DATA) {
+        if (event->current_data_offset != 0 || event->data_len != event->total_data_len
+            || event->topic_len <= 0 || event->topic_len >= 191 || event->data_len >= 127) return;
+        char topic[192];
+        char payload[128];
+        memcpy(topic, event->topic, event->topic_len);
+        topic[event->topic_len] = '\0';
+        memcpy(payload, event->data, event->data_len);
+        payload[event->data_len] = '\0';
+        handle_command(topic, payload);
+    } else if (event_id == MQTT_EVENT_ERROR) {
+        ESP_LOGW(TAG, "client error");
+    }
+}
+
+static void stop_client(void)
+{
+    s_connected = false;
+    if (!s_client) return;
+    esp_mqtt_client_stop(s_client);
+    esp_mqtt_client_destroy(s_client);
+    s_client = NULL;
+}
+
+static void start_client(void)
+{
+    mqtt_integration_config_t cfg;
+    mqtt_integration_get_config(&cfg);
+    if (!cfg.enabled || !cfg.uri[0] || !cfg.base_topic[0]) return;
+    snprintf(s_availability_topic, sizeof s_availability_topic, "%s/availability", cfg.base_topic);
+    snprintf(s_state_topic, sizeof s_state_topic, "%s/state", cfg.base_topic);
+    const esp_mqtt_client_config_t client_config = {
+        .broker.address.uri = cfg.uri,
+        .broker.verification.crt_bundle_attach = esp_crt_bundle_attach,
+        .credentials.username = cfg.username[0] ? cfg.username : NULL,
+        .credentials.authentication.password = cfg.password[0] ? cfg.password : NULL,
+        .session.last_will.topic = s_availability_topic,
+        .session.last_will.msg = "offline",
+        .session.last_will.qos = 1,
+        .session.last_will.retain = 1,
+        .session.keepalive = 60,
+        .network.reconnect_timeout_ms = 5000,
+        .task.stack_size = 6144,
+        .buffer.size = 2048,
+    };
+    s_client = esp_mqtt_client_init(&client_config);
+    if (!s_client) {
+        ESP_LOGE(TAG, "esp_mqtt_client_init failed");
+        return;
+    }
+    esp_mqtt_client_register_event(s_client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
+    esp_err_t err = esp_mqtt_client_start(s_client);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "start failed: %s", esp_err_to_name(err));
+        esp_mqtt_client_destroy(s_client);
+        s_client = NULL;
+    } else {
+        ESP_LOGI(TAG, "connecting to %s", cfg.uri);
+    }
+}
+
+static void manager_task(void *arg)
+{
+    (void)arg;
+    start_client();
+    int elapsed = 0;
+    while (true) {
+        uint32_t notified = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));
+        if (notified) {
+            stop_client();
+            start_client();
+            elapsed = 0;
+        }
+        mqtt_integration_config_t cfg;
+        mqtt_integration_get_config(&cfg);
+        elapsed++;
+        if (s_connected && (s_publish_requested || elapsed >= cfg.interval_seconds)) {
+            s_publish_requested = false;
+            elapsed = 0;
+            publish_state();
+        }
+        if (s_connected && s_discovery_requested) {
+            s_discovery_requested = false;
+            publish_discovery();
+        }
+    }
+}
+
+void mqtt_integration_init(void)
+{
+    if (s_manager_task) return;
+    if (!s_lock) s_lock = xSemaphoreCreateMutex();
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    load_config();
+    xSemaphoreGive(s_lock);
+    xTaskCreate(manager_task, "mqtt_bridge", 6144, NULL, 4, &s_manager_task);
+}
+
+void mqtt_integration_get_config(mqtt_integration_config_t *out)
+{
+    if (!out) return;
+    if (!s_lock) {
+        config_defaults(out);
+        return;
+    }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    memcpy(out, &s_config, sizeof *out);
+    xSemaphoreGive(s_lock);
+}
+
+esp_err_t mqtt_integration_set_config(const mqtt_integration_config_t *config)
+{
+    if (!config || config->interval_seconds < 5 || config->interval_seconds > 3600)
+        return ESP_ERR_INVALID_ARG;
+    if (config->enabled && (!config->uri[0] || !config->base_topic[0]))
+        return ESP_ERR_INVALID_ARG;
+    esp_err_t err = nvs_param_set_u8("mqtt_en", config->enabled ? 1 : 0);
+#define SAVE_STR(key, field) do { if (err == ESP_OK) err = nvs_param_set_str((key), (field)); } while (0)
+    SAVE_STR("mqtt_uri", config->uri);
+    SAVE_STR("mqtt_user", config->username);
+    SAVE_STR("mqtt_pass", config->password);
+    SAVE_STR("mqtt_topic", config->base_topic);
+    SAVE_STR("mqtt_hapfx", config->discovery_prefix);
+#undef SAVE_STR
+    if (err == ESP_OK) err = nvs_param_set_u8("mqtt_ha", config->home_assistant_discovery ? 1 : 0);
+    if (err == ESP_OK) err = nvs_param_set_u16("mqtt_int", config->interval_seconds);
+    if (err != ESP_OK) return err;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    memcpy(&s_config, config, sizeof s_config);
+    xSemaphoreGive(s_lock);
+    if (s_manager_task) xTaskNotifyGive(s_manager_task);
+    return ESP_OK;
+}
+
+bool mqtt_integration_connected(void)
+{
+    return s_connected;
+}
+
+void mqtt_integration_publish_now(void)
+{
+    s_publish_requested = true;
+}
+
+void mqtt_integration_wol_changed(void)
+{
+    s_discovery_requested = true;
+}

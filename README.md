@@ -139,6 +139,14 @@ traffic you route through it.)*
   microSD "flight recorder" for catching control-plane stalls.
 - **DHCP niceties** — reservations, live lease table, per-client signal,
   and a MAC denylist.
+- **Selectable recovery AP** — keep the setup access point permanently on,
+  or automatically turn it off after the uplink connects and bring it back
+  whenever the uplink drops.
+- **Wake-on-LAN address book** — save up to 12 devices and send their UDP
+  magic packets from the web UI, MQTT, or Home Assistant.
+- **MQTT + Home Assistant** — retained health/network/Tailscale state,
+  inbound AP/restart/WOL commands, Last Will availability, and automatic
+  Home Assistant discovery (including one Wake button per saved device).
 - **Robust by design** — encrypted config backup/restore, OTA updates
   (with an opt-in beta channel for pre-releases), per-sink (console + SD)
   log levels, auto AP-channel realign on STA roam, and pre-crash log capture.

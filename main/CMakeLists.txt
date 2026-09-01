@@ -41,6 +41,8 @@ idf_component_register(SRCS "main.c"
                             "web_ui.c"
                             "netif_hooks.c"
                             "wifi_networks.c"
+                            "wol.c"
+                            "mqtt_integration.c"
                             "dhcp_reservations.c"
                             "portmap.c"
                             "mac_deny.c"
@@ -55,6 +57,7 @@ idf_component_register(SRCS "main.c"
                                   web_password net_diag dhcpserver
                                   espcoredump dns_relay cli
                                   app_update esp_https_ota
+                                  mqtt
                     INCLUDE_DIRS ".")
 
 # Phase 1.9k: wrap ip_napt_forward to skip NAPT for tailnet CGNAT
