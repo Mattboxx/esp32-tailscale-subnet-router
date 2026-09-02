@@ -1,7 +1,7 @@
 ESP32-S3 ROUTER - WINDOWS FLASH PACKAGE
 =======================================
 
-Firmware: 0.1.20-Mattboxx
+Firmware: 0.1.19-Mattboxx
 
 Requirements: 64-bit Windows 10/11, an ESP32-S3 connected over USB, and
 every serial monitor closed.

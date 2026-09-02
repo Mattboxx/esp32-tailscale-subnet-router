@@ -19,7 +19,7 @@
 
 ## Mattboxx edition — read this first
 
-This is the `0.1.20-Mattboxx` fork, based on upstream `v0.1.19` and built and
+This is the `0.1.19-Mattboxx` fork, based on upstream `v0.1.19` and built and
 flashed on a real ESP32-S3 N16R8. It is intentionally different from upstream:
 
 - adds a standby/always-available client WiFi policy, WOL address book, MQTT and extensive
@@ -481,7 +481,7 @@ connections. Diagnostic ping and traceroute run only when explicitly started.
 
 For the complete, explicit comparison with upstream `main`, see
 [`CUSTOM_BRANCH.md`](CUSTOM_BRANCH.md). A ready-to-use Windows flash package is
-available as [`ESP32-S3-router-0.1.20-Mattboxx-windows.zip`](flash-package/ESP32-S3-router-0.1.20-Mattboxx-windows.zip);
+available as [`ESP32-S3-router-0.1.19-Mattboxx-windows.zip`](flash-package/ESP32-S3-router-0.1.19-Mattboxx-windows.zip);
 instructions are in [`flash-package/README.txt`](flash-package/README.txt).
 
 ## Security
