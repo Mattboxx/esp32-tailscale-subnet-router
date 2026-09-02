@@ -8,7 +8,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform: ESP32-S3](https://img.shields.io/badge/platform-ESP32--S3-7c3aed.svg)](#hardware)
-[![ESP-IDF](https://img.shields.io/badge/ESP--IDF-5.5%2B-e7352c.svg)](https://docs.espressif.com/projects/esp-idf/)
+[![ESP-IDF](https://img.shields.io/badge/ESP--IDF-5.3.1-e7352c.svg)](https://docs.espressif.com/projects/esp-idf/)
 [![CodeQL](https://github.com/Mattboxx/esp32-tailscale-subnet-router/actions/workflows/codeql.yml/badge.svg)](https://github.com/Mattboxx/esp32-tailscale-subnet-router/actions/workflows/codeql.yml)
 [![GitHub Sponsors](https://img.shields.io/badge/GitHub-Sponsor-ea4aaa.svg?style=plastic&logo=githubsponsors)](https://github.com/sponsors/Csontikka)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-donate-yellow.svg?style=plastic)](https://buymeacoffee.com/csontikka)
@@ -19,13 +19,13 @@
 
 ## Mattboxx edition — read this first
 
-This is the `0.1.19-Mattboxx` fork, based on upstream `v0.1.19` and built and
+This is the `0.1.20-Mattboxx` fork, based on upstream `v0.1.19` and built and
 flashed on a real ESP32-S3 N16R8. It is intentionally different from upstream:
 
-- adds a recovery-only/always-on AP policy, WOL address book, MQTT and extensive
+- adds a standby/always-available client WiFi policy, WOL address book, MQTT and extensive
   Home Assistant controls, optional 4via6, and optional ntfy alerts/commands;
-- fixes WiFi scan/save failures (including HTTP 431) and the ntfy command-poll
-  reboot loop;
+- fixes WiFi scan/save failures (including HTTP 431), the ntfy command-poll
+  reboot loop, and commands silently missed between polls;
 - removes telemetry, external log/crash uploads, automatic GitHub update checks,
   automatic downloads, Cloudflare speed tests and the hard-coded DNS fallback;
 - ships a ready-to-flash Windows ZIP and a single factory image in each release.
@@ -150,9 +150,10 @@ traffic you route through it.)*
   control-plane stalls.
 - **DHCP niceties** — reservations, live lease table, per-client signal,
   and a MAC denylist.
-- **Selectable recovery AP** — keep the setup access point permanently on,
-  or automatically turn it off after the uplink connects and bring it back
-  whenever the uplink drops.
+- **Selectable client WiFi** — use the ESP access point as a simple gateway for
+  devices that need Internet and tailnet access; keep it always available or
+  place it in standby while the uplink is connected. It returns automatically
+  after an uplink failure so administration remains possible.
 - **Wake-on-LAN address book** — save up to 12 devices and send their UDP
   magic packets from the web UI, MQTT, or Home Assistant.
 - **MQTT + Home Assistant** — retained health/network/Tailscale state,
@@ -456,6 +457,17 @@ key); disable it for the tailnet or pre-authorize the node.
   the local uplink. Clear the exit node to restore direct internet.
 - **Tailnet lock unsupported.** Headscale over HTTPS needs a public-CA
   certificate (self-signed is rejected).
+- **Local web UI uses HTTP.** Tailscale still encrypts tailnet transport, but
+  administer the device only from a trusted LAN/AP or through Tailscale. A
+  hostile client on the same local network can otherwise observe HTTP traffic.
+- **Physical extraction is not prevented.** The portable factory image leaves
+  ESP32-S3 Secure Boot, flash encryption and NVS encryption disabled. Someone
+  with physical access can read stored credentials or replace the firmware.
+- **Remote automation is as trusted as its transport.** Use MQTT/ntfy TLS,
+  private topics and broker/server ACLs, especially when commands are enabled.
+- **ESP-IDF 5.3.1.** The pinned PlatformIO framework must be compatibility-tested
+  before a patch-line upgrade; security-relevant upstream fixes are reviewed
+  against the enabled feature set in this fork.
 - **2.4 GHz only**, single AP subnet.
 
 ## Privacy and outbound traffic
@@ -469,7 +481,7 @@ connections. Diagnostic ping and traceroute run only when explicitly started.
 
 For the complete, explicit comparison with upstream `main`, see
 [`CUSTOM_BRANCH.md`](CUSTOM_BRANCH.md). A ready-to-use Windows flash package is
-available as [`ESP32-S3-router-0.1.19-Mattboxx-windows.zip`](flash-package/ESP32-S3-router-0.1.19-Mattboxx-windows.zip);
+available as [`ESP32-S3-router-0.1.20-Mattboxx-windows.zip`](flash-package/ESP32-S3-router-0.1.20-Mattboxx-windows.zip);
 instructions are in [`flash-package/README.txt`](flash-package/README.txt).
 
 ## Security
@@ -501,7 +513,7 @@ guidelines, and **[docs/TESTING.md](docs/TESTING.md)** for the test harness.
 ## Support
 
 Found a bug or have an idea? Open an
-[issue](https://github.com/Csontikka/esp32-tailscale-subnet-router/issues).
+[issue](https://github.com/Mattboxx/esp32-tailscale-subnet-router/issues).
 If this firmware saved you a router purchase or an afternoon of
 debugging, you can chip in:
 [buy me a coffee](https://buymeacoffee.com/csontikka) ☕ or [sponsor me on GitHub](https://github.com/sponsors/Csontikka)

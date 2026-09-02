@@ -9,12 +9,12 @@ web-UI authentication bypass, or any other concern that affects the safety of a
 device running this code — please report it privately rather than opening a
 public issue.
 
-**Preferred channel:** use GitHub's [private vulnerability reporting](https://github.com/Csontikka/esp32-tailscale-subnet-router/security/advisories/new)
+**Preferred channel:** use GitHub's [private vulnerability reporting](https://github.com/Mattboxx/esp32-tailscale-subnet-router/security/advisories/new)
 on this repository. This creates a private security advisory that only the
 maintainer and invited collaborators can see.
 
-If that isn't available to you, you can also email the maintainer directly (see
-the GitHub profile at [@Csontikka](https://github.com/Csontikka)).
+If that isn't available, contact the fork owner through the GitHub profile at
+[@Mattboxx](https://github.com/Mattboxx).
 
 Please include:
 
@@ -26,8 +26,7 @@ Please include:
 - Any logs, crash dumps (coredump), or serial output that illustrates the
   problem.
 
-I will acknowledge the report within a few days, work with you to confirm the
-issue, and coordinate a fix and disclosure timeline.
+Reports will be reviewed privately and coordinated before disclosure.
 
 ## Scope
 
@@ -40,7 +39,7 @@ fix will likely need to land in that project first.
 
 ## Supported Versions
 
-This project is under **heavy development**. Only the current `main` branch is
+This project is under **heavy development**. Only the current `mattboxx` branch is
 supported for security fixes. Older commits and unreleased snapshots are not
 maintained.
 

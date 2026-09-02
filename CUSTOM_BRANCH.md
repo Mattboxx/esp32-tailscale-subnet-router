@@ -7,8 +7,9 @@ connected board.
 ## Added
 
 - Stable ESP32-S3 setup UI and WiFi scanning/saving, including the HTTP 431 fix.
-- Selectable recovery AP: always on, or disabled while uplink is connected and
-  restored after a disconnect. Dashboard and Network explicitly show Disabled.
+- Selectable client WiFi / tailnet gateway: always available, or placed in
+  standby while the uplink is connected and restored after a disconnect.
+  Dashboard and Network explicitly show Disabled when it is not running.
 - A separate Automation page for Wake-on-LAN and MQTT/Home Assistant.
 - A WOL address book with saved name, MAC, broadcast and port, plus web, MQTT
   and Home Assistant triggers.
@@ -22,6 +23,11 @@ connected board.
   plus replay-protected `info` and saved/direct-MAC WOL commands.
 - Fixed the ntfy command-poll reboot loop: the HTTP response buffer is now
   heap-backed instead of exhausting the ntfy task stack on its first poll.
+- Fixed ntfy commands being permanently missed because the old 10-second
+  history window was shorter than the default 15-second poll interval. The
+  first eligible poll is immediate and subsequent polls use a durable cursor.
+- Graphical on/off switches and visibly dimmed disabled cards/settings for AP,
+  Tailscale, 4via6, MQTT, Home Assistant, watchdog, ntfy and web authentication.
 - Optional web password gate and session timeout. Passwords of at least four
   characters are accepted, with a visible warning for weak choices.
 - Manual local OTA upload and explicit privacy/outbound-traffic reporting.
@@ -42,6 +48,16 @@ older upstream releases. The source is deleted and not linked into the firmware.
 - Persistent warning logs omit peer names, key prefixes, private endpoint IPs
   and endpoint ports.
 - The remote TCP console refuses to start without a configured admin password.
+- Login attempts are rate-limited per client; initial password setup is only
+  accepted through the ESP's own access point.
+- Dynamic toast text is inserted as text rather than HTML, preventing stored or
+  reflected script injection through device names and server error messages.
+- HTTP request bodies are read completely before JSON parsing instead of
+  assuming one TCP read contains the entire save request.
+- Retained or duplicate MQTT commands are ignored so an old restart/WOL command
+  cannot execute again every time the broker reconnects.
+- DHCP packet address fields are defensively initialized and lease eviction is
+  safe even when its list-size invariant is violated in a release build.
 - Secrets, OTA, factory reset, crash trigger and Tailscale identity reset always
   require a password-authenticated session, even when the UI gate is disabled.
 - The compiled image contains no fixed telemetry, update or speed-test target.
@@ -59,6 +75,18 @@ The remaining functional traffic is limited to:
 No hidden path that adds tailnet devices or uploads local logs was found in the
 reviewed source or compiled image. Peers come from the configured control plane.
 This source audit is not a formal proof; tailnet and broker ACLs remain important.
+
+## Remaining security boundaries
+
+- The web UI is HTTP, so use it only on a trusted AP/LAN or over encrypted
+  Tailscale transport.
+- Secure Boot, flash encryption and NVS encryption remain disabled so one
+  generic factory image can be flashed on ordinary boards. Physical access can
+  therefore expose saved credentials and replace the firmware.
+- Four-character passwords are accepted by operator choice. Online guesses are
+  throttled, but a strong unique password is still recommended.
+- MQTT/ntfy commands trust the configured broker/server, token and topic. Prefer
+  TLS transports, private random topics and restrictive ACLs.
 
 ## Flashing
 

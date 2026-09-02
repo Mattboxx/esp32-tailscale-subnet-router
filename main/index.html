@@ -23,11 +23,19 @@
       --fg-muted:     #5c6370;
       --fg-inverse:   #0d0f12;
 
+      /* Compatibility aliases for older inline fragments. Keeping one
+       * vocabulary prevents sections from silently falling back to browser
+       * default colours. */
+      --text-primary:   var(--fg-primary);
+      --text-secondary: var(--fg-secondary);
+      --text-muted:     var(--fg-muted);
+
       /* Accent (primary action) */
       --accent:       #3b82f6;
       --accent-hover: #2563eb;
       --accent-muted: rgba(59, 130, 246, 0.15);
       --accent-border: rgba(59, 130, 246, 0.35);
+      --accent-primary: var(--accent);
 
       /* Semantic */
       --success:        #22c55e;
@@ -40,6 +48,7 @@
       --danger-hover:   #dc2626;
       --danger-muted:   rgba(239, 68, 68, 0.12);
       --danger-border:  rgba(239, 68, 68, 0.3);
+      --accent-danger:  var(--danger);
       --info:           #06b6d4;
       --info-muted:     rgba(6, 182, 212, 0.12);
       --info-border:    rgba(6, 182, 212, 0.3);
@@ -48,6 +57,7 @@
       --border:         #232830;
       --border-muted:   #1a1f26;
       --border-focus:   #3b82f6;
+      --bg-subtle:      var(--bg-elevated);
 
       /* Typography */
       --font-ui:    -apple-system, 'Segoe UI', system-ui, sans-serif;
@@ -367,6 +377,100 @@
       box-shadow: var(--shadow-md);
     }
 
+    /* Optional services must look off when they are off.  Keep the master
+     * switch at full contrast so the operator can always turn the feature
+     * back on, while de-emphasising settings that currently have no effect. */
+    .feature-card {
+      transition: background-color var(--transition-fast),
+                  border-color var(--transition-fast),
+                  box-shadow var(--transition-fast);
+    }
+    .feature-card.feature-disabled {
+      background: var(--bg-card);
+      border-color: var(--border-muted);
+      box-shadow: inset 3px 0 0 var(--fg-muted);
+    }
+    .feature-card.feature-disabled > .card-header .card-title,
+    .feature-card.feature-disabled > .card-body > :not(.feature-master-control),
+    .feature-card.feature-disabled > .card-body-flush,
+    .feature-card.feature-disabled > .stat-list,
+    .feature-card.feature-disabled > .form-footer {
+      opacity: 0.68;
+      filter: saturate(0.72);
+    }
+    .feature-inline-dependent {
+      transition: opacity var(--transition-fast), filter var(--transition-fast);
+    }
+    .feature-inline-dependent.feature-disabled {
+      opacity: 0.62;
+      filter: saturate(0.70);
+    }
+
+    .feature-master-control {
+      padding: var(--sp-3);
+      border: 1px solid var(--accent-border);
+      border-radius: var(--radius-lg);
+      background: var(--bg-elevated);
+    }
+
+    /* Graphical on/off switch used for service-level controls.  The native
+     * checkbox remains in the accessibility tree and owns the checked state. */
+    .feature-switch {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.65rem;
+      cursor: pointer;
+      user-select: none;
+      color: var(--fg-secondary);
+      font-weight: var(--weight-medium);
+    }
+    .feature-switch input {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .feature-switch-track {
+      position: relative;
+      flex: 0 0 auto;
+      width: 2.75rem;
+      height: 1.5rem;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--bg-hover);
+      box-shadow: inset 0 1px 2px rgba(0,0,0,0.16);
+      transition: background-color var(--transition-fast), border-color var(--transition-fast);
+    }
+    .feature-switch-track::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 1.1rem;
+      height: 1.1rem;
+      border-radius: 50%;
+      background: var(--fg-muted);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.28);
+      transition: transform var(--transition-fast), background-color var(--transition-fast);
+    }
+    .feature-switch input:checked + .feature-switch-track {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+    .feature-switch input:checked + .feature-switch-track::after {
+      transform: translateX(1.25rem);
+      background: #fff;
+    }
+    .feature-switch input:focus-visible + .feature-switch-track {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .feature-switch input:disabled + .feature-switch-track {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
     /* Left-border accent stripe variant */
     .card-stripe-success { border-left: 3px solid var(--success); }
     .card-stripe-warning { border-left: 3px solid var(--warning); }
@@ -521,7 +625,7 @@
 
     /* Sizes */
     .btn-sm  { font-size: var(--text-xs); padding: 4px 10px; }
-    .btn-md  { font-size: var(--text-sm); padding: 6px 14px; }
+    .btn-md  { font-size: var(--text-sm); padding: 8px 14px; }
     .btn-lg  { font-size: var(--text-md); padding: 9px 20px; }
     .btn-icon { padding: 6px; }
 
@@ -601,6 +705,7 @@
       font-family: var(--font-ui);
       font-size: var(--text-md);
       padding: 7px 11px;
+      min-height: 38px;
       transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
       appearance: none;
     }
@@ -1619,7 +1724,7 @@
                   <path d="M5 12.55a11 11 0 0114.08 0M1.42 9a16 16 0 0121.16 0M10.95 16.55L12 18l1.05-1.45"/>
                 </svg>
               </span>
-              <span class="card-title">Access Point</span>
+              <span class="card-title">Client WiFi / Tailnet gateway</span>
             </div>
             <span class="badge badge-neutral" id="ap-clients-badge">—</span>
           </div>
@@ -1813,7 +1918,7 @@
       <div class="page-header">
         <div class="page-header-left">
           <h1 class="page-title">Network</h1>
-          <p class="page-subtitle">Uplink WiFi, access point, IP configuration</p>
+          <p class="page-subtitle">Uplink WiFi and a client network for simple Internet and tailnet access</p>
         </div>
       </div>
 
@@ -1877,15 +1982,21 @@
         </div>
       </div>
 
-      <!-- ===== Access Point (AP) ===== -->
+      <!-- ===== Client WiFi / Access Point (AP) ===== -->
       <div class="card mt-4">
         <div class="card-header">
           <div class="card-header-left">
-            <span class="card-title">Access Point</span>
+            <span class="card-title">Client WiFi / Tailnet gateway</span>
           </div>
           <span class="badge badge-neutral" id="net-ap-badge">—</span>
         </div>
         <div class="card-body">
+          <div class="form-group feature-master-control">
+            <label class="feature-switch">
+              <input type="checkbox" id="net-ap-uplink-enabled"><span class="feature-switch-track" aria-hidden="true"></span><span>Enable client access point</span>
+            </label>
+            <span class="form-hint">This WiFi network lets devices use the ESP32 as their gateway to the Internet and to routes available through Tailscale. When switched off, it stays hidden during normal connected operation but returns automatically if the uplink is lost, so the router cannot become unreachable.</span>
+          </div>
           <div class="stat-row">
             <span class="stat-label">Connected clients</span>
             <span class="stat-value mono" id="net-ap-clients">—</span>
@@ -1925,26 +2036,20 @@
             <span class="form-hint">DHCP Option 6 — what AP clients learn as their resolver. Empty hands out this device's own AP IP and routes lookups through the on-board forwarder below (the usual setup). Enter a LAN resolver such as Pi-hole to bypass the forwarder.</span>
           </div>
           <div class="form-group" style="margin-top:0.25rem;">
-            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
-              <input type="checkbox" id="net-ap-uplink-enabled"> Keep access point enabled while an uplink is connected
-            </label>
-            <span class="form-hint">Turn this off to disable the AP while WiFi/Ethernet is connected. The recovery AP always comes back automatically if every uplink is lost.</span>
-          </div>
-          <div class="form-group" style="margin-top:0.25rem;">
-            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
-              <input type="checkbox" id="net-ap-dns-relay-enabled"> On-board DNS forwarder
+            <label class="feature-switch" style="display:flex;">
+              <input type="checkbox" id="net-ap-dns-relay-enabled"><span class="feature-switch-track" aria-hidden="true"></span><span>On-board DNS forwarder</span>
               <span class="badge badge-neutral" id="net-ap-dns-relay-badge" style="margin-left:auto;">—</span>
             </label>
             <span class="form-hint">On by default — forwards queries from AP clients to the upstream resolver below. Turn off only if a separate resolver (Pi-hole, external DNS server) is reachable on the AP subnet.</span>
           </div>
-          <div class="form-group" style="margin-top:0.25rem;">
+          <div class="form-group feature-inline-dependent" id="net-ap-dns-relay-settings" style="margin-top:0.25rem;">
             <label class="form-label" for="net-ap-dns-relay-upstream">Forwarder upstream</label>
             <input class="input mono" type="text" id="net-ap-dns-relay-upstream" placeholder="empty = use the DNS learned by the STA">
             <span class="form-hint">Where the forwarder sends queries it cannot answer locally. Leave empty to follow the uplink DHCP lease, or enter a resolver on your LAN.</span>
           </div>
           <div class="form-group" style="margin-top:0.25rem;">
-            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
-              <input type="checkbox" id="net-ap-hidden"> Hide SSID (do not broadcast in beacons)
+            <label class="feature-switch">
+              <input type="checkbox" id="net-ap-hidden"><span class="feature-switch-track" aria-hidden="true"></span><span>Hide SSID (do not broadcast in beacons)</span>
             </label>
             <span class="form-hint">Clients still need the SSID typed in to connect — this only stops casual scanners from listing it.</span>
           </div>
@@ -2074,7 +2179,7 @@
       </div>
 
       <!-- ===== Configuration ===== -->
-      <div class="card">
+      <div class="card feature-card feature-disabled" id="ts-config-card">
         <div class="card-header">
           <div class="card-header-left">
             <span class="card-title">Configuration</span>
@@ -2100,16 +2205,11 @@
             </button>
           </div>
 
-          <div class="form-group">
+          <div class="form-group feature-master-control">
             <label class="form-label">Service</label>
-            <div style="display:flex; gap:1rem; padding:0.25rem 0;">
-              <label style="display:flex; align-items:center; gap:0.4rem; cursor:pointer;">
-                <input type="radio" name="ts_enabled" id="ts_enabled_on" value="1"> Enabled
-              </label>
-              <label style="display:flex; align-items:center; gap:0.4rem; cursor:pointer;">
-                <input type="radio" name="ts_enabled" id="ts_enabled_off" value="0" checked> Disabled
-              </label>
-            </div>
+            <label class="feature-switch" style="padding:0.25rem 0;">
+              <input type="checkbox" id="ts_enabled_on"><span class="feature-switch-track" aria-hidden="true"></span><span>Enable Tailscale</span>
+            </label>
           </div>
 
           <div class="form-group">
@@ -2148,8 +2248,8 @@
           </div>
 
           <div class="form-group" style="padding-top:0.75rem; border-top:1px solid var(--border);">
-            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
-              <input type="checkbox" id="ts-4via6-enabled"> Enable 4via6 subnet routing
+            <label class="feature-switch">
+              <input type="checkbox" id="ts-4via6-enabled"><span class="feature-switch-track" aria-hidden="true"></span><span>Enable 4via6 subnet routing</span>
             </label>
             <span class="form-hint">Optional support for overlapping IPv4 LANs through Tailscale's <code class="mono">fd7a:115c:a1e0:b1a::/64</code> mapping. Disabled by default and compatible with the normal IPv4 routes above.</span>
           </div>
@@ -2163,8 +2263,8 @@
           </div>
 
           <div class="form-group">
-            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
-              <input type="checkbox" id="ts-snat"> Source-NAT advertised routes
+            <label class="feature-switch">
+              <input type="checkbox" id="ts-snat"><span class="feature-switch-track" aria-hidden="true"></span><span>Source-NAT advertised routes</span>
             </label>
             <span class="form-hint">Masquerades tunnel&rarr;LAN traffic to this device's IP so upstream hosts can reply without a route back to the tailnet. On = works out of the box (Tailscale default for subnet routers). Off = the upstream router needs a static route (100.64.0.0/10 &rarr; this device).</span>
           </div>
@@ -2184,15 +2284,15 @@
           </div>
 
           <div class="form-group">
-            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
-              <input type="checkbox" id="ts-accept-routes"> Accept peer subnet routes
+            <label class="feature-switch">
+              <input type="checkbox" id="ts-accept-routes"><span class="feature-switch-track" aria-hidden="true"></span><span>Accept peer subnet routes</span>
             </label>
             <span class="form-hint">Honour CIDRs other peers advertise (e.g. another LAN).</span>
           </div>
 
           <div class="form-group">
-            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
-              <input type="checkbox" id="ts-lan-bypass" checked> LAN bypass when using an exit node
+            <label class="feature-switch">
+              <input type="checkbox" id="ts-lan-bypass" checked><span class="feature-switch-track" aria-hidden="true"></span><span>LAN bypass when using an exit node</span>
             </label>
             <span class="form-hint">RFC1918 destinations stay on the local LAN even when an exit node is selected.</span>
           </div>
@@ -2542,15 +2642,15 @@
       </div>
 
       <!-- ===== MQTT + Home Assistant ===== -->
-      <div class="card mt-4">
+      <div class="card feature-card feature-disabled mt-4" id="mqtt-card">
         <div class="card-header">
           <div class="card-header-left"><span class="card-title">MQTT &amp; Home Assistant</span></div>
           <span class="badge badge-neutral" id="mqtt-badge">—</span>
         </div>
         <div class="card-body">
-          <div class="form-group">
-            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
-              <input type="checkbox" id="mqtt-enabled"> Enable MQTT
+          <div class="form-group feature-master-control">
+            <label class="feature-switch">
+              <input type="checkbox" id="mqtt-enabled"><span class="feature-switch-track" aria-hidden="true"></span><span>Enable MQTT</span>
             </label>
             <span class="form-hint">Publishes a retained status packet and listens for commands. Supports <code class="mono">mqtt://</code>, <code class="mono">mqtts://</code>, WebSocket and secure WebSocket broker URIs.</span>
           </div>
@@ -2564,21 +2664,21 @@
           </div>
           <div class="grid grid-cols-2">
             <div class="form-group"><label class="form-label" for="mqtt-interval">Status interval (seconds)</label><input class="input mono" type="number" id="mqtt-interval" min="5" max="3600" value="30"></div>
-            <div class="form-group"><label class="form-label" for="mqtt-ha-prefix">Discovery prefix</label><input class="input mono" id="mqtt-ha-prefix" value="homeassistant"></div>
+            <div class="form-group feature-inline-dependent" id="mqtt-ha-settings"><label class="form-label" for="mqtt-ha-prefix">Discovery prefix</label><input class="input mono" id="mqtt-ha-prefix" value="homeassistant"></div>
           </div>
           <div class="form-group">
-            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
-              <input type="checkbox" id="mqtt-ha-enabled"> Home Assistant MQTT discovery
+            <label class="feature-switch">
+              <input type="checkbox" id="mqtt-ha-enabled"><span class="feature-switch-track" aria-hidden="true"></span><span>Home Assistant MQTT discovery</span>
             </label>
             <span class="form-hint">Creates full device diagnostics plus AP/Tailscale/routing switches, WiFi and Tailscale reconnect buttons, restart/status buttons, and one Wake button per saved WOL device.</span>
           </div>
           <div class="form-group" style="padding-top:0.75rem; border-top:1px solid var(--border);">
-            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
-              <input type="checkbox" id="mqtt-watchdog-enabled"> Wake the MQTT broker when it stays offline
+            <label class="feature-switch">
+              <input type="checkbox" id="mqtt-watchdog-enabled"><span class="feature-switch-track" aria-hidden="true"></span><span>Wake the MQTT broker when it stays offline</span>
             </label>
             <span class="form-hint">After a continuous broker outage, sends one three-packet WOL burst to a saved device. It re-arms only after MQTT connects again, so it cannot flood the LAN.</span>
           </div>
-          <div class="grid grid-cols-2">
+          <div class="grid grid-cols-2 feature-inline-dependent" id="mqtt-watchdog-settings">
             <div class="form-group"><label class="form-label" for="mqtt-watchdog-timeout">Offline timeout (seconds)</label><input class="input mono" type="number" id="mqtt-watchdog-timeout" min="30" max="86400" value="300"></div>
             <div class="form-group"><label class="form-label" for="mqtt-watchdog-target">Broker WOL device</label><select class="input" id="mqtt-watchdog-target"><option value="">— save a WOL device first —</option></select></div>
           </div>
@@ -2596,25 +2696,25 @@
       </div>
 
       <!-- ===== ntfy alerts and commands ===== -->
-      <div class="card mt-4">
+      <div class="card feature-card feature-disabled mt-4" id="ntfy-card">
         <div class="card-header">
           <div class="card-header-left"><span class="card-title">ntfy alerts &amp; commands</span></div>
           <span class="badge badge-neutral" id="ntfy-badge">Disabled</span>
         </div>
         <div class="card-body">
-          <div class="form-group"><label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;"><input type="checkbox" id="ntfy-enabled"> Enable ntfy integration</label><span class="form-hint">No ntfy traffic is sent while disabled. Prefer a self-hosted server or a private, access-controlled topic.</span></div>
+          <div class="form-group feature-master-control"><label class="feature-switch"><input type="checkbox" id="ntfy-enabled"><span class="feature-switch-track" aria-hidden="true"></span><span>Enable ntfy integration</span></label><span class="form-hint">No ntfy traffic is sent while disabled. Prefer a self-hosted server or a private, access-controlled topic.</span></div>
           <div class="grid grid-cols-2">
             <div class="form-group"><label class="form-label" for="ntfy-server">Server URL</label><input class="input mono" id="ntfy-server" value="https://ntfy.sh"></div>
             <div class="form-group"><label class="form-label" for="ntfy-topic">Topic</label><input class="input mono" id="ntfy-topic" placeholder="private-random-topic"></div>
           </div>
           <div class="form-group"><label class="form-label" for="ntfy-token">Access token</label><input class="input" type="password" id="ntfy-token" autocomplete="new-password" placeholder="Optional — leave empty to keep"><label class="form-hint" style="display:flex;gap:0.35rem;align-items:center;"><input type="checkbox" id="ntfy-token-clear"> Clear saved token</label></div>
           <div class="grid grid-cols-2">
-            <div class="form-group"><label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;"><input type="checkbox" id="ntfy-alerts"> Alert when internet works but Tailscale stays down</label><label class="form-label" for="ntfy-delay" style="margin-top:0.5rem;">Failure delay (seconds)</label><input class="input mono" type="number" id="ntfy-delay" min="15" max="3600" value="120"></div>
-            <div class="form-group"><label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;"><input type="checkbox" id="ntfy-commands"> Receive remote commands</label><label class="form-label" for="ntfy-poll" style="margin-top:0.5rem;">Poll interval (seconds)</label><input class="input mono" type="number" id="ntfy-poll" min="5" max="300" value="15"></div>
+            <div class="form-group"><label class="feature-switch"><input type="checkbox" id="ntfy-alerts"><span class="feature-switch-track" aria-hidden="true"></span><span>Alert when internet works but Tailscale stays down</span></label><div class="feature-inline-dependent" id="ntfy-alert-settings"><label class="form-label" for="ntfy-delay" style="margin-top:0.5rem;">Failure delay (seconds)</label><input class="input mono" type="number" id="ntfy-delay" min="15" max="3600" value="120"></div></div>
+            <div class="form-group"><label class="feature-switch"><input type="checkbox" id="ntfy-commands"><span class="feature-switch-track" aria-hidden="true"></span><span>Receive remote commands</span></label><div class="feature-inline-dependent" id="ntfy-command-settings"><label class="form-label" for="ntfy-poll" style="margin-top:0.5rem;">Poll interval (seconds)</label><input class="input mono" type="number" id="ntfy-poll" min="5" max="300" value="15"></div></div>
           </div>
-          <div class="form-group"><label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;"><input type="checkbox" id="ntfy-down-only"> Poll commands only while Tailscale is down</label></div>
-          <div class="form-group"><label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;"><input type="checkbox" id="ntfy-info"> Allow <code class="mono">info</code> command</label><span class="form-hint">Replies on the same topic with operational state, local/tailnet IPs, peers, AP clients and saved WOL targets. Credentials and tokens are always excluded.</span></div>
-          <div class="form-group"><label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;"><input type="checkbox" id="ntfy-direct-mac"> Allow <code class="mono">wol aa:bb:cc:dd:ee:ff</code> for unsaved MAC addresses</label><span class="form-hint">When off, <code class="mono">wol DEVICE_NAME</code> and saved MAC addresses still work.</span></div>
+          <div class="form-group"><label class="feature-switch"><input type="checkbox" id="ntfy-down-only"><span class="feature-switch-track" aria-hidden="true"></span><span>Poll commands only while Tailscale is down</span></label></div>
+          <div class="form-group"><label class="feature-switch"><input type="checkbox" id="ntfy-info"><span class="feature-switch-track" aria-hidden="true"></span><span>Allow <code class="mono">info</code> command</span></label><span class="form-hint">Replies on the same topic with operational state, local/tailnet IPs, peers, AP clients and saved WOL targets. Credentials and tokens are always excluded.</span></div>
+          <div class="form-group"><label class="feature-switch"><input type="checkbox" id="ntfy-direct-mac"><span class="feature-switch-track" aria-hidden="true"></span><span>Allow <code class="mono">wol aa:bb:cc:dd:ee:ff</code> for unsaved MAC addresses</span></label><span class="form-hint">When off, <code class="mono">wol DEVICE_NAME</code> and saved MAC addresses still work.</span></div>
           <div class="form-hint mono" id="ntfy-status">Commands: info · wol DEVICE_NAME · wol aa:bb:cc:dd:ee:ff</div>
         </div>
         <div class="form-footer">
@@ -2807,7 +2907,7 @@
       </div>
 
       <!-- ===== Web session ===== -->
-      <div class="card mt-4">
+      <div class="card feature-card feature-disabled mt-4" id="web-session-card">
         <div class="card-header">
           <div class="card-header-left">
             <span class="card-title">Web session</span>
@@ -2815,9 +2915,9 @@
           <span class="badge badge-neutral" id="sys-auth-to-badge">—</span>
         </div>
         <div class="card-body">
-          <div class="form-group">
-            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
-              <input type="checkbox" id="sys-web-auth-enabled"> Require the admin password for the web UI
+          <div class="form-group feature-master-control">
+            <label class="feature-switch">
+              <input type="checkbox" id="sys-web-auth-enabled"><span class="feature-switch-track" aria-hidden="true"></span><span>Require the admin password for the web UI</span>
             </label>
             <span class="form-hint"><strong>Warning:</strong> turning this off lets anyone who can reach the ESP32 change its normal settings. Secret export/import, identity reset, factory reset, firmware upload and the TCP remote console still require a real password-backed session; re-enable the gate to use them later.</span>
           </div>
@@ -2894,8 +2994,9 @@
           <p style="margin:0 0 0.5rem 0;"><strong>esp32-tailscale-subnet-router</strong> — a single-board ESP32-S3 router that joins your IoT subnet directly to a Tailscale (or Headscale) tailnet, so remote peers can reach LAN devices behind a CGNAT or a phone hotspot without port forwarding.</p>
           <div class="stat-row"><span class="stat-label">Firmware version</span><span class="stat-value mono" id="about-version">—</span></div>
           <div class="stat-row"><span class="stat-label">Build tag</span>       <span class="stat-value mono" id="about-build-tag" title="—">—</span></div>
-          <div class="stat-row"><span class="stat-label">Source</span><span class="stat-value mono"><a href="https://github.com/Csontikka/esp32-tailscale-subnet-router" target="_blank" rel="noopener" style="color:var(--accent);">github.com/Csontikka/esp32-tailscale-subnet-router</a></span></div>
-          <div class="stat-row"><span class="stat-label">Issues</span><span class="stat-value mono"><a href="https://github.com/Csontikka/esp32-tailscale-subnet-router/issues" target="_blank" rel="noopener" style="color:var(--accent);">github.com/&hellip;/issues</a></span></div>
+          <div class="stat-row"><span class="stat-label">Source</span><span class="stat-value mono"><a href="https://github.com/Mattboxx/esp32-tailscale-subnet-router" target="_blank" rel="noopener" style="color:var(--accent);">github.com/Mattboxx/esp32-tailscale-subnet-router</a></span></div>
+          <div class="stat-row"><span class="stat-label">Issues</span><span class="stat-value mono"><a href="https://github.com/Mattboxx/esp32-tailscale-subnet-router/issues" target="_blank" rel="noopener" style="color:var(--accent);">github.com/&hellip;/issues</a></span></div>
+          <div class="stat-row"><span class="stat-label">Original upstream</span><span class="stat-value mono"><a href="https://github.com/Csontikka/esp32-tailscale-subnet-router" target="_blank" rel="noopener" style="color:var(--accent);">Csontikka/esp32-tailscale-subnet-router</a></span></div>
           <div class="stat-row"><span class="stat-label">Tailscale stack</span><span class="stat-value mono"><a href="https://github.com/Csontikka/microlink" target="_blank" rel="noopener" style="color:var(--accent);">Csontikka/microlink</a> (userspace WireGuard + DERP + DISCO)</span></div>
           <div class="stat-row"><span class="stat-label">License</span><span class="stat-value mono">MIT — see LICENSE in the repo</span></div>
           <div class="stat-row"><span class="stat-label">Privacy</span><span class="stat-value mono">No telemetry / no update polling</span></div>
@@ -3167,10 +3268,18 @@
       };
       var el = document.createElement('div');
       el.className = 'toast toast-' + type;
+      /* Only the icon markup is a firmware-owned constant.  Titles and
+       * messages may include device names or HTTP error text, so insert them
+       * with textContent to prevent stored/reflected script injection. */
       el.innerHTML = '<span class="toast-icon">' + (icons[type] || icons.info) + '</span>'
-        + '<div class="toast-body"><div class="toast-title">' + title + '</div>'
-        + (message ? '<div class="toast-msg">' + message + '</div>' : '')
-        + '</div>';
+        + '<div class="toast-body"><div class="toast-title"></div></div>';
+      el.querySelector('.toast-title').textContent = title == null ? '' : String(title);
+      if (message) {
+        var msg = document.createElement('div');
+        msg.className = 'toast-msg';
+        msg.textContent = String(message);
+        el.querySelector('.toast-body').appendChild(msg);
+      }
       container.appendChild(el);
       setTimeout(function () {
         el.style.opacity = '0';
@@ -3314,6 +3423,21 @@
       return '↓ ' + formatBytes(bin || 0) + '   ↑ ' + formatBytes(bout || 0);
     }
 
+    function setFeatureCardState(id, enabled) {
+      var card = document.getElementById(id);
+      if (!card) return;
+      card.classList.add('feature-card');
+      card.classList.toggle('feature-disabled', !enabled);
+      card.setAttribute('data-feature-state', enabled ? 'enabled' : 'disabled');
+    }
+
+    function setFeatureDependentState(id, enabled) {
+      var element = document.getElementById(id);
+      if (!element) return;
+      element.classList.add('feature-inline-dependent');
+      element.classList.toggle('feature-disabled', !enabled);
+    }
+
     function applyStatus(data) {
       // STA (uplink)
       var ul = data.sta || {};
@@ -3365,6 +3489,7 @@
         : 'Disabled';
       apClientsBadge.className = (apEnabled && typeof ap.clients === 'number' && ap.clients > 0) ? 'badge badge-success' : 'badge badge-neutral';
       document.getElementById('card-ap').className = apEnabled ? 'card card-stripe-accent' : 'card';
+      setFeatureCardState('card-ap', apEnabled);
 
       /* System tile — internal DRAM + SPIRAM bars, CPU load %, CPU temp.
        * Backend reports mem_internal_free/total, mem_spiram_free/total,
@@ -3448,6 +3573,7 @@
         tsBadge.className = 'badge badge-neutral';
         tsBadge.textContent = 'Off';
       }
+      setFeatureCardState('card-tailscale-status', !!ts.enabled);
       document.getElementById('ts-ip').textContent       = ts.tunnel_ip || '—';
       /* Empty hostname means the operator hasn't set ts_hostname in NVS
        * — the control plane assigns a default in that case. Make the
@@ -4055,6 +4181,7 @@
         .then(function (r) {
           if (r.ok) return r;
           if (r.status === 401) throw new Error('wrong');
+          if (r.status === 429) throw new Error('rate:' + (r.headers.get('Retry-After') || 'a few'));
           throw new Error('error');
         })
         .then(function () {
@@ -4067,6 +4194,8 @@
           if (err.message === 'wrong') {
             setAuthError('login-error', 'Wrong password.');
             setTimeout(function () { setAuthError('login-error', ''); }, 3000);
+          } else if (err.message.indexOf('rate:') === 0) {
+            setAuthError('login-error', 'Too many attempts. Try again in ' + err.message.substring(5) + ' seconds.');
           } else {
             setAuthError('login-error', 'Login failed. Please try again.');
           }
@@ -4266,17 +4395,17 @@
                   +     '</div>'
                   +   '</div>'
                   +   '<div class="form-group" style="margin:0;">'
-                  +     '<label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">'
-                  +       '<input type="checkbox" class="net-eap-cb"' + (eap.cert_bundle ? ' checked' : '') + '>'
-                  +       'Verify server certificate against the bundled Mozilla CA store'
+                  +     '<label class="feature-switch">'
+                  +       '<input type="checkbox" class="net-eap-cb"' + (eap.cert_bundle ? ' checked' : '') + '><span class="feature-switch-track" aria-hidden="true"></span>'
+                  +       '<span>Verify server certificate against the bundled Mozilla CA store</span>'
                   +     '</label>'
                   +     '<span class="form-hint">Off = trust the server unconditionally. Turn on for eduroam-class deployments that present a publicly-trusted RADIUS cert.</span>'
                   +   '</div>'
                   + '</div>';
                 })()
               + '<div class="form-group" style="margin-top:0.25rem;">'
-              +   '<label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">'
-              +     '<input type="checkbox" class="net-static-toggle" ' + (isStatic?'checked':'') + '> Use static IP on this network'
+              +   '<label class="feature-switch">'
+              +     '<input type="checkbox" class="net-static-toggle" ' + (isStatic?'checked':'') + '><span class="feature-switch-track" aria-hidden="true"></span><span>Use static IP on this network</span>'
               +   '</label>'
               + '</div>'
               + '<div class="net-static-block" style="display:' + (isStatic?'':'none') + ';">'
@@ -4375,6 +4504,7 @@
           var dr = ap.dns_relay || {};
           document.getElementById('net-ap-dns-relay-enabled').checked = !!dr.enabled;
           document.getElementById('net-ap-dns-relay-upstream').value  = dr.upstream || '';
+          setFeatureDependentState('net-ap-dns-relay-settings', !!dr.enabled);
           var drb = document.getElementById('net-ap-dns-relay-badge');
           if (!dr.enabled) {
             drb.textContent = 'off'; drb.className = 'badge badge-neutral';
@@ -4415,7 +4545,7 @@
           apBadge.textContent = apEnabled ? (clients === 1 ? '1 client' : (clients + ' clients')) : 'Disabled';
           apClients.textContent = apEnabled
             ? (clients + (ap.ip ? '   (AP IP: ' + ap.ip + ')' : ''))
-            : 'Access point disabled while the uplink is connected';
+            : 'Disabled — client WiFi is in standby while the uplink is connected';
         }).catch(function () {});
 
       /* DHCP reservations + connected-client/lease snapshot. */
@@ -4688,6 +4818,8 @@
       var el = document.getElementById(id);
       var ev = (el.tagName === 'SELECT') ? 'change' : 'input';
       el.addEventListener(ev, function () {
+        if (id === 'net-ap-dns-relay-enabled')
+          setFeatureDependentState('net-ap-dns-relay-settings', el.checked);
         document.getElementById('net-ap-save').disabled = false;
       });
     });
@@ -5442,7 +5574,7 @@
 
           /* Settings form. */
           document.getElementById('ts_enabled_on').checked  = !!s.enabled;
-          document.getElementById('ts_enabled_off').checked = !s.enabled;
+          setFeatureCardState('ts-config-card', !!s.enabled);
           document.getElementById('ts-auth-key').value      = '';
           /* Stored auth-key fingerprint — backend serves a masked
            * preview (prefix + last 4 + length). Enough to tell two
@@ -5638,7 +5770,7 @@
     }
 
     /* Dirty-track and wiring. */
-    ['ts_enabled_on', 'ts_enabled_off', 'ts-auth-key', 'ts-hostname', 'ts-login',
+    ['ts_enabled_on', 'ts-auth-key', 'ts-hostname', 'ts-login',
      'ts-routes', 'ts-max-peers', 'ts-accept-routes', 'ts-lan-bypass', 'ts-snat', 'ts-exit-node',
      'ts-4via6-enabled', 'ts-4via6-lan', 'ts-4via6-site'
     ].forEach(function (id) {
@@ -5647,6 +5779,8 @@
                ? 'change' : 'input';
       el.addEventListener(ev, function () {
         if (id.indexOf('ts-4via6-') === 0) update4via6Preview();
+        if (id === 'ts_enabled_on')
+          setFeatureCardState('ts-config-card', document.getElementById('ts_enabled_on').checked);
         document.getElementById('ts-save').disabled = false;
       });
     });
@@ -6322,6 +6456,7 @@
         badge.className = 'badge badge-warning'; badge.textContent = 'Connecting…';
       }
       document.getElementById('mqtt-enabled').checked = !!d.enabled;
+      setFeatureCardState('mqtt-card', !!d.enabled);
       document.getElementById('mqtt-uri').value = d.uri || '';
       document.getElementById('mqtt-topic').value = d.base_topic || '';
       document.getElementById('mqtt-user').value = d.username || '';
@@ -6330,8 +6465,10 @@
       document.getElementById('mqtt-password-clear').checked = false;
       document.getElementById('mqtt-interval').value = d.interval_seconds || 30;
       document.getElementById('mqtt-ha-enabled').checked = !!d.home_assistant_discovery;
+      setFeatureDependentState('mqtt-ha-settings', !!d.enabled && !!d.home_assistant_discovery);
       document.getElementById('mqtt-ha-prefix').value = d.discovery_prefix || 'homeassistant';
       document.getElementById('mqtt-watchdog-enabled').checked = !!d.broker_watchdog_enabled;
+      setFeatureDependentState('mqtt-watchdog-settings', !!d.enabled && !!d.broker_watchdog_enabled);
       document.getElementById('mqtt-watchdog-timeout').value = d.broker_watchdog_timeout_seconds || 300;
       var watchdogTarget = document.getElementById('mqtt-watchdog-target');
       watchdogTarget.innerHTML = '<option value="">— select a saved WOL device —</option>';
@@ -6357,6 +6494,7 @@
       var topic = d.base_topic || '…';
       document.getElementById('mqtt-topics-help').textContent =
         'State: ' + topic + '/state · all Home Assistant controls: ' + topic + '/command/#';
+      document.getElementById('mqtt-publish').disabled = !d.enabled;
       document.getElementById('mqtt-save').disabled = true;
     }
 
@@ -6375,6 +6513,15 @@
      'mqtt-watchdog-enabled', 'mqtt-watchdog-timeout', 'mqtt-watchdog-target'].forEach(function (id) {
       var element = document.getElementById(id);
       element.addEventListener(element.type === 'checkbox' ? 'change' : 'input', function () {
+        var mqttEnabled = document.getElementById('mqtt-enabled').checked;
+        if (id === 'mqtt-enabled') {
+          setFeatureCardState('mqtt-card', mqttEnabled);
+          document.getElementById('mqtt-publish').disabled = !mqttEnabled;
+        }
+        if (id === 'mqtt-enabled' || id === 'mqtt-ha-enabled')
+          setFeatureDependentState('mqtt-ha-settings', mqttEnabled && document.getElementById('mqtt-ha-enabled').checked);
+        if (id === 'mqtt-enabled' || id === 'mqtt-watchdog-enabled')
+          setFeatureDependentState('mqtt-watchdog-settings', mqttEnabled && document.getElementById('mqtt-watchdog-enabled').checked);
         document.getElementById('mqtt-save').disabled = false;
       });
     });
@@ -6443,6 +6590,14 @@
       });
     });
 
+    function syncNtfyFeatureStates() {
+      var enabled = document.getElementById('ntfy-enabled').checked;
+      setFeatureCardState('ntfy-card', enabled);
+      setFeatureDependentState('ntfy-alert-settings', enabled && document.getElementById('ntfy-alerts').checked);
+      setFeatureDependentState('ntfy-command-settings', enabled && document.getElementById('ntfy-commands').checked);
+      document.getElementById('ntfy-test').disabled = !enabled;
+    }
+
     function loadNtfy() {
       apiFetch('/api/ntfy').then(function (r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -6461,6 +6616,7 @@
         document.getElementById('ntfy-info').checked = !!d.info_enabled;
         document.getElementById('ntfy-delay').value = d.failure_delay_seconds || 120;
         document.getElementById('ntfy-poll').value = d.poll_interval_seconds || 15;
+        syncNtfyFeatureStates();
         var badge = document.getElementById('ntfy-badge');
         badge.textContent = d.enabled ? (d.last_publish_ok ? 'Enabled · reachable' : 'Enabled') : 'Disabled';
         badge.className = 'badge ' + (!d.enabled ? 'badge-neutral' : (d.last_publish_ok ? 'badge-success' : 'badge-warning'));
@@ -6475,11 +6631,21 @@
      'ntfy-commands','ntfy-down-only','ntfy-direct-mac','ntfy-info','ntfy-delay','ntfy-poll'].forEach(function(id) {
       var el=document.getElementById(id);
       el.addEventListener(el.type === 'checkbox' ? 'change' : 'input', function() {
+        if (id === 'ntfy-enabled' || id === 'ntfy-alerts' || id === 'ntfy-commands')
+          syncNtfyFeatureStates();
         document.getElementById('ntfy-save').disabled=false;
       });
     });
     document.getElementById('ntfy-reload').addEventListener('click', loadNtfy);
     document.getElementById('ntfy-test').addEventListener('click', function() {
+      if (!document.getElementById('ntfy-enabled').checked) {
+        showToast('warning','ntfy is disabled','Enable ntfy and save the settings before sending a test.',5000);
+        return;
+      }
+      if (!document.getElementById('ntfy-save').disabled) {
+        showToast('warning','Save ntfy first','There are unapplied settings. Save them, then send the test.',5000);
+        return;
+      }
       var btn=this; btn.disabled=true;
       apiFetch('/api/ntfy/test',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
         showToast(d.ok?'success':'error', d.ok?'ntfy test sent':'ntfy test failed', d.ok?'Check the configured topic.':'Save and verify the server, topic and token.',5000);
@@ -6569,6 +6735,7 @@
 
           var authToggle = document.getElementById('sys-web-auth-enabled');
           authToggle.checked = d.web_auth_enabled !== false;
+          setFeatureCardState('web-session-card', authToggle.checked);
           document.getElementById('sys-web-auth-save').disabled = true;
 
           /* Idle session timeout — snap the select to whichever option
@@ -7357,6 +7524,7 @@
     });
 
     document.getElementById('sys-web-auth-enabled').addEventListener('change', function () {
+      setFeatureCardState('web-session-card', this.checked);
       document.getElementById('sys-web-auth-save').disabled = false;
     });
     document.getElementById('sys-web-auth-save').addEventListener('click', function () {

@@ -18,6 +18,7 @@
 #include "freertos/task.h"
 #include "cJSON.h"
 #include "lwip/ip4_addr.h"
+#include "lwip/sockets.h"
 #include "web_ui.h"
 #include "tailscale_config.h"
 #include "tailscale_mtu.h"
@@ -574,13 +575,17 @@ static esp_err_t recv_body(httpd_req_t *req, char *buf, size_t buf_size, int *ou
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "body too large or empty");
         return ESP_FAIL;
     }
-    int n = httpd_req_recv(req, buf, req->content_len);
-    if (n <= 0) {
-        if (n == HTTPD_SOCK_ERR_TIMEOUT) httpd_resp_send_408(req);
-        return ESP_FAIL;
+    int received = 0;
+    while (received < req->content_len) {
+        int n = httpd_req_recv(req, buf + received, req->content_len - received);
+        if (n <= 0) {
+            if (n == HTTPD_SOCK_ERR_TIMEOUT) httpd_resp_send_408(req);
+            return ESP_FAIL;
+        }
+        received += n;
     }
-    buf[n] = '\0';
-    if (out_len) *out_len = n;
+    buf[received] = '\0';
+    if (out_len) *out_len = received;
     return ESP_OK;
 }
 
@@ -4146,18 +4151,89 @@ static esp_err_t auth_status_handler(httpd_req_t *req)
     return err;
 }
 
+/* Per-client login throttling. Weak passwords are intentionally permitted by
+ * policy, so the HTTP endpoint must not also be an unlimited online guessing
+ * oracle. Four buckets cover the ESP HTTP server's small concurrent-client
+ * limit without putting attacker-controlled state in NVS. */
+typedef struct {
+    uint32_t peer_ip;
+    uint8_t failures;
+    uint64_t blocked_until_us;
+    uint64_t last_seen_us;
+} login_guard_t;
+
+#define LOGIN_GUARD_SLOTS 4
+static login_guard_t s_login_guards[LOGIN_GUARD_SLOTS];
+
+static uint32_t request_peer_ipv4(httpd_req_t *req)
+{
+    struct sockaddr_storage addr = {0};
+    socklen_t len = sizeof addr;
+    int fd = httpd_req_to_sockfd(req);
+    if (fd < 0 || getpeername(fd, (struct sockaddr *)&addr, &len) != 0
+        || addr.ss_family != AF_INET) return 0;
+    return ((struct sockaddr_in *)&addr)->sin_addr.s_addr;
+}
+
+static login_guard_t *login_guard_for(httpd_req_t *req)
+{
+    uint32_t ip = request_peer_ipv4(req);
+    int oldest = 0;
+    uint64_t oldest_seen = UINT64_MAX;
+    for (int i = 0; i < LOGIN_GUARD_SLOTS; i++) {
+        if (s_login_guards[i].peer_ip == ip && s_login_guards[i].last_seen_us)
+            return &s_login_guards[i];
+        if (!s_login_guards[i].last_seen_us) {
+            oldest = i;
+            oldest_seen = 0;
+            break;
+        }
+        if (s_login_guards[i].last_seen_us < oldest_seen) {
+            oldest_seen = s_login_guards[i].last_seen_us;
+            oldest = i;
+        }
+    }
+    memset(&s_login_guards[oldest], 0, sizeof s_login_guards[oldest]);
+    s_login_guards[oldest].peer_ip = ip;
+    return &s_login_guards[oldest];
+}
+
+static bool login_guard_reject(httpd_req_t *req, login_guard_t **out)
+{
+    login_guard_t *guard = login_guard_for(req);
+    uint64_t now = (uint64_t)esp_timer_get_time();
+    guard->last_seen_us = now;
+    if (out) *out = guard;
+    if (now >= guard->blocked_until_us) return false;
+    uint32_t retry_s = (uint32_t)((guard->blocked_until_us - now + 999999ULL) / 1000000ULL);
+    char retry[12];
+    snprintf(retry, sizeof retry, "%u", (unsigned)retry_s);
+    httpd_resp_set_status(req, "429 Too Many Requests");
+    httpd_resp_set_hdr(req, "Retry-After", retry);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"ok\":false,\"reason\":\"rate_limited\"}");
+    return true;
+}
+
+static void login_guard_failed(login_guard_t *guard)
+{
+    if (!guard) return;
+    if (guard->failures < UINT8_MAX) guard->failures++;
+    if (guard->failures < 3) return;
+    unsigned shift = guard->failures - 3;
+    uint32_t delay_s = shift >= 6 ? 60U : (1U << shift);
+    guard->blocked_until_us = (uint64_t)esp_timer_get_time()
+                            + (uint64_t)delay_s * 1000000ULL;
+}
+
 static esp_err_t auth_login_handler(httpd_req_t *req)
 {
+    login_guard_t *guard = NULL;
+    if (login_guard_reject(req, &guard)) return ESP_FAIL;
     /* Cap the body at a sane size so a misbehaving client can't make us
      * allocate megabytes for a password field. */
     char buf[256];
-    int total = req->content_len < (int)sizeof buf ? req->content_len : (int)sizeof buf - 1;
-    int n = httpd_req_recv(req, buf, total);
-    if (n <= 0) {
-        if (n == HTTPD_SOCK_ERR_TIMEOUT) httpd_resp_send_408(req);
-        return ESP_FAIL;
-    }
-    buf[n] = '\0';
+    if (recv_body(req, buf, sizeof buf, NULL) != ESP_OK) return ESP_FAIL;
 
     cJSON *body = cJSON_Parse(buf);
     cJSON *pw   = body ? cJSON_GetObjectItem(body, "password") : NULL;
@@ -4171,11 +4247,14 @@ static esp_err_t auth_login_handler(httpd_req_t *req)
     cJSON_Delete(body);
 
     if (!ok) {
+        login_guard_failed(guard);
         /* Don't leak whether a password is set or just wrong — same 401
          * either way. */
         httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "unauthorised");
         return ESP_FAIL;
     }
+
+    memset(guard, 0, sizeof *guard);
 
     const char *new_token = session_create();
     char cookie[160];
@@ -4227,6 +4306,28 @@ static const char *check_password_policy(const char *pw)
     return NULL;
 }
 
+/* The unauthenticated setup endpoint must only be reachable through the
+ * device's own access point. Otherwise, whenever no password is configured,
+ * any client on the upstream LAN could claim the router by setting one first.
+ * Comparing the accepted socket's local address (rather than trusting Host or
+ * Origin headers) also covers custom AP subnets without adding configuration
+ * coupling here. */
+static bool request_arrived_on_ap(httpd_req_t *req)
+{
+    if (!wifi_ap_runtime_enabled()) return false;
+
+    struct sockaddr_storage local = {0};
+    socklen_t local_len = sizeof local;
+    int fd = httpd_req_to_sockfd(req);
+    if (fd < 0 || getsockname(fd, (struct sockaddr *)&local, &local_len) != 0
+        || local.ss_family != AF_INET) return false;
+
+    esp_netif_t *ap = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+    esp_netif_ip_info_t ap_ip = {0};
+    if (!ap || esp_netif_get_ip_info(ap, &ap_ip) != ESP_OK) return false;
+    return ((struct sockaddr_in *)&local)->sin_addr.s_addr == ap_ip.ip.addr;
+}
+
 static esp_err_t auth_setup_handler(httpd_req_t *req)
 {
     /* First-boot wizard endpoint — only accessible while no password is
@@ -4236,26 +4337,27 @@ static esp_err_t auth_setup_handler(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "password already set");
         return ESP_FAIL;
     }
-
-    char buf[256];
-    int total = req->content_len < (int)sizeof buf ? req->content_len : (int)sizeof buf - 1;
-    int n = httpd_req_recv(req, buf, total);
-    if (n <= 0) {
-        if (n == HTTPD_SOCK_ERR_TIMEOUT) httpd_resp_send_408(req);
+    if (!request_arrived_on_ap(req)) {
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN,
+                            "initial password setup is only allowed through the device AP");
         return ESP_FAIL;
     }
-    buf[n] = '\0';
+
+    char buf[256];
+    if (recv_body(req, buf, sizeof buf, NULL) != ESP_OK) return ESP_FAIL;
 
     cJSON *body = cJSON_Parse(buf);
     cJSON *pw   = body ? cJSON_GetObjectItem(body, "password") : NULL;
-    const char *policy_err = check_password_policy(cJSON_IsString(pw) ? pw->valuestring : NULL);
+    const char *pw_value = NULL;
+    if (pw != NULL && cJSON_IsString(pw)) pw_value = pw->valuestring;
+    const char *policy_err = check_password_policy(pw_value);
     if (policy_err) {
         cJSON_Delete(body);
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, policy_err);
         return ESP_FAIL;
     }
 
-    esp_err_t err = set_web_password_hashed(pw->valuestring);
+    esp_err_t err = set_web_password_hashed(pw_value);
     cJSON_Delete(body);
     if (err != ESP_OK) {
         httpd_resp_send_500(req);

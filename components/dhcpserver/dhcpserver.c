@@ -593,9 +593,9 @@ static void create_msg(dhcps_t *dhcps, struct dhcps_msg *m)
 static void dhcps_response_ip_set(dhcps_t *dhcps, struct dhcps_msg *m, ip4_addr_t *ip4_out)
 {
 #if ETHARP_SUPPORT_STATIC_ENTRIES
-    ip4_addr_t ip4_giaddr;
-    ip4_addr_t ip4_ciaddr;
-    ip4_addr_t ip4_yiaddr;
+    ip4_addr_t ip4_giaddr = {.addr = 0};
+    ip4_addr_t ip4_ciaddr = {.addr = 0};
+    ip4_addr_t ip4_yiaddr = {.addr = 0};
 
     struct eth_addr chaddr;
     memcpy(chaddr.addr, m->chaddr, sizeof(chaddr.addr));
@@ -793,7 +793,7 @@ static void send_nak(dhcps_t *dhcps, struct dhcps_msg *m, u16_t len)
     ip_addr_t ip_temp = IPADDR4_INIT(0x0);
 
 #if ETHARP_SUPPORT_STATIC_ENTRIES
-    ip4_addr_t ip4_giaddr;
+    ip4_addr_t ip4_giaddr = {.addr = 0};
     struct eth_addr chaddr;
     memcpy(chaddr.addr, m->chaddr, sizeof(chaddr.addr));
     memcpy((char *)&ip4_giaddr.addr, (char *)m->giaddr, sizeof(m->giaddr));
@@ -1531,7 +1531,10 @@ static void kill_oldest_dhcps_pool(dhcps_t *dhcps)
     list_node *minpre = NULL, *minp = NULL;
     struct dhcps_pool *pdhcps_pool = NULL, *pmin_pool = NULL;
     pre = dhcps->plist;
-    assert(pre != NULL && pre->pnext != NULL); // Expect the list to have at least 2 nodes
+    /* The timer calls this only after counting more than MAX_STATION_NUM
+     * leases, but keep the helper safe even when assertions are compiled
+     * out or a future caller violates that invariant. */
+    if (pre == NULL || pre->pnext == NULL) return;
     p = pre->pnext;
     minpre = pre;
     minp = pre;

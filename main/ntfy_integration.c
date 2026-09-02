@@ -225,7 +225,7 @@ static void send_info(const ntfy_integration_config_t *c)
                     ? clients.num : 0;
     appendf(text, 8192, "\nAccess point: %s (policy: %s)\nConnected AP devices: %d\n",
             wifi_ap_runtime_enabled() ? "enabled" : "disabled",
-            wifi_ap_policy_auto_off() ? "recovery only" : "always on", clients_n);
+            wifi_ap_policy_auto_off() ? "standby while uplink is connected" : "always available", clients_n);
     for (int i = 0; i < clients_n; i++) {
         uint8_t *m = clients.sta[i].mac;
         appendf(text, 8192, "- %02x:%02x:%02x:%02x:%02x:%02x RSSI %d dBm\n",
@@ -299,9 +299,20 @@ static bool response_is_ours(cJSON *root)
 
 static void poll_commands(const ntfy_integration_config_t *c)
 {
+    char cursor[sizeof s_last_event_id];
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    strlcpy(cursor, s_last_event_id, sizeof cursor);
+    xSemaphoreGive(s_lock);
+
+    /* The old fixed `since=10s` window was shorter than the default
+     * 15-second polling interval.  Commands landing in that gap were lost
+     * forever.  Cover one complete interval plus network/TLS scheduling
+     * jitter until ntfy gives us a durable message-id cursor. */
+    char since[48];
+    if (cursor[0]) strlcpy(since, cursor, sizeof since);
+    else snprintf(since, sizeof since, "%us", (unsigned)c->poll_interval_seconds + 30U);
     char suffix[96];
-    snprintf(suffix, sizeof suffix, "/json?poll=1&since=%s",
-             s_last_event_id[0] ? s_last_event_id : "10s");
+    snprintf(suffix, sizeof suffix, "/json?poll=1&since=%s", since);
     /* Keep the response off the task stack. An 8 KiB automatic buffer here
      * exhausted the ntfy task's entire 8 KiB stack on the first poll and
      * corrupted the TLSF heap, causing a reboot loop about 15 seconds after
@@ -319,7 +330,11 @@ static void poll_commands(const ntfy_integration_config_t *c)
     esp_err_t err = esp_http_client_perform(client);
     int status = err == ESP_OK ? esp_http_client_get_status_code(client) : 0;
     esp_http_client_cleanup(client);
-    if (err != ESP_OK || status != 200) { free(response); return; }
+    if (err != ESP_OK || status != 200) {
+        ESP_LOGW(TAG, "command poll failed: %s HTTP %d", esp_err_to_name(err), status);
+        free(response);
+        return;
+    }
     char *save = NULL;
     for (char *line = strtok_r(response, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
         cJSON *event = cJSON_Parse(line);
@@ -328,12 +343,17 @@ static void poll_commands(const ntfy_integration_config_t *c)
         cJSON *kind = cJSON_GetObjectItem(event, "event");
         cJSON *msg = cJSON_GetObjectItem(event, "message");
         if (cJSON_IsString(kind) && strcmp(kind->valuestring, "message") == 0) {
+            bool duplicate = false;
             if (cJSON_IsString(id)) {
+                xSemaphoreTake(s_lock, portMAX_DELAY);
+                duplicate = strcmp(s_last_event_id, id->valuestring) == 0;
                 strlcpy(s_last_event_id, id->valuestring, sizeof s_last_event_id);
+                xSemaphoreGive(s_lock);
                 /* Prevent a reboot from replaying a cached WOL command. */
-                (void)nvs_param_set_str("ntfy_last", s_last_event_id);
+                (void)nvs_param_set_str("ntfy_last", id->valuestring);
             }
-            if (cJSON_IsString(msg) && !response_is_ours(event)) handle_command(c, msg->valuestring);
+            if (!duplicate && cJSON_IsString(msg) && !response_is_ours(event))
+                handle_command(c, msg->valuestring);
         }
         cJSON_Delete(event);
     }
@@ -366,12 +386,16 @@ static void task_main(void *arg)
     (void)arg;
     uint32_t down_seconds = 0, poll_seconds = 0, retry_seconds = 0;
     bool alerted = false;
+    bool could_poll_before = false;
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(1000));
         ntfy_integration_config_t c;
         snapshot(&c);
         if (!c.enabled || !uplink_connected()) {
-            down_seconds = poll_seconds = retry_seconds = 0; alerted = false; continue;
+            down_seconds = poll_seconds = retry_seconds = 0;
+            alerted = false;
+            could_poll_before = false;
+            continue;
         }
         bool ts_down = tailscale_enabled && !tailscale_is_connected();
         if (ts_down) down_seconds++; else { down_seconds = 0; alerted = false; }
@@ -385,6 +409,12 @@ static void task_main(void *arg)
         }
         bool can_poll = c.commands_enabled
                      && (!c.commands_only_when_tailscale_down || ts_down);
+        /* Arm immediately after enabling commands (or after the
+         * Tailscale-down condition becomes true) instead of waiting one
+         * complete poll interval before establishing the server cursor. */
+        if (can_poll && !could_poll_before)
+            poll_seconds = c.poll_interval_seconds;
+        could_poll_before = can_poll;
         if (can_poll && ++poll_seconds >= c.poll_interval_seconds) {
             poll_seconds = 0; poll_commands(&c);
         } else if (!can_poll) poll_seconds = 0;
@@ -437,7 +467,9 @@ esp_err_t ntfy_integration_set_config(const ntfy_integration_config_t *c)
     if (e != ESP_OK) return e;
     xSemaphoreTake(s_lock, portMAX_DELAY); memcpy(&s_config, c, sizeof *c); xSemaphoreGive(s_lock);
     if (endpoint_changed) {
+        xSemaphoreTake(s_lock, portMAX_DELAY);
         s_last_event_id[0] = '\0';
+        xSemaphoreGive(s_lock);
         (void)nvs_param_erase("ntfy_last");
     }
     return ESP_OK;

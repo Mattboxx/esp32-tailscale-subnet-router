@@ -503,6 +503,16 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
         s_last_broker_ok_us = esp_timer_get_time();
         ESP_LOGW(TAG, "disconnected");
     } else if (event_id == MQTT_EVENT_DATA) {
+        /* Command topics are edge-triggered controls, never state.  A retained
+         * `restart` (or Tailscale toggle) would otherwise execute on every
+         * reconnect and can trap the device in a reboot loop.  QoS1 duplicate
+         * deliveries are ignored for the same reason: WOL/reboot are not
+         * safely repeatable actions. */
+        if (event->retain || event->dup) {
+            ESP_LOGW(TAG, "ignored %s MQTT command delivery",
+                     event->retain ? "retained" : "duplicate");
+            return;
+        }
         if (event->current_data_offset != 0 || event->data_len != event->total_data_len
             || event->topic_len <= 0 || event->topic_len >= 191 || event->data_len >= 127) return;
         char topic[192];

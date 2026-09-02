@@ -2,9 +2,9 @@ name: Sensitive Data Check
 
 on:
   push:
-    branches: [main]
+    branches: [mattboxx]
   pull_request:
-    branches: [main]
+    branches: [mattboxx]
 
 jobs:
   scan:
