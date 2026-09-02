@@ -1,0 +1,18 @@
+Firmware branch: codex/ap-wol-mqtt
+Target: ESP32-S3 N16R8, flash mode DIO, 80 MHz, image size 4 MB
+Build framework: ESP-IDF 5.3.1 via PlatformIO
+esptool.exe: Espressif esptool v5.3.1 standalone Windows amd64
+Download ufficiale esptool:
+https://github.com/espressif/esptool/releases/download/v5.3.1/esptool-v5.3.1-windows-amd64.zip
+Codice sorgente corrispondente (GPL-2.0-or-later):
+https://github.com/espressif/esptool/tree/v5.3.1
+SHA256 archivio ufficiale:
+2b4a73c45db27426685896f64ce3e557f63a64f43cc100cb65c0cc3486af96d3
+
+SHA256 file inclusi:
+bootloader.bin         73b350d0983b5064222a464feb94951a8a4459dd8f6cebb5b26ec0efe2efd9b0
+firmware-factory.bin   e0356fb60989614e9f541fd365ae656d2a1d778d500f321c7edb647c8eb16b14
+firmware.bin           6e7436e59b9be8847c39b8ee0fe03642059f1c5189908dc98ff2b96201bf9535
+ota_data_initial.bin   7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f
+partitions.bin         0e4ae97e72746c559529154007a256e26158230263cb43cfca415525ef9c9489
+esptool.exe            a939e28fe2fbb53e65e46f0246a4d71b9fd6c052ef0e046182df4a4fe8bec946

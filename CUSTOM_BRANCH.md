@@ -1,0 +1,58 @@
+# Custom ESP32-S3 router branch
+
+This branch starts from upstream `main` at `v0.1.19` and targets the ESP32-S3
+N16R8 used during development. It has been built, flashed and tested on the
+connected board.
+
+## Added
+
+- Stable ESP32-S3 setup UI and WiFi scanning/saving, including the HTTP 431 fix.
+- Selectable recovery AP: always on, or disabled while uplink is connected and
+  restored after a disconnect. Dashboard and Network explicitly show Disabled.
+- A separate Automation page for Wake-on-LAN and MQTT/Home Assistant.
+- A WOL address book with saved name, MAC, broadcast and port, plus web, MQTT
+  and Home Assistant triggers.
+- MQTT retained state, Last Will, commands and watchdog.
+- Home Assistant discovery for network/Tailscale/AP/system/MQTT diagnostics and
+  AP, routes, SNAT, LAN bypass, Tailscale, reconnect, restart, publish and WOL.
+- Optional web password gate and session timeout. Passwords of at least four
+  characters are accepted, with a visible warning for weak choices.
+- Manual local OTA upload and explicit privacy/outbound-traffic reporting.
+
+## Removed from upstream main
+
+- Built-in anonymous telemetry and its hard-coded Cloudflare Worker. No boot,
+  usage, reconnect, reset or crash event is uploaded.
+- Automatic GitHub release polling and firmware downloads.
+- Cloudflare speed test and its hard-coded public DNS fallback.
+- Browser-side automatic GitHub release requests.
+
+Historical telemetry entries remain in `CHANGELOG.md` only because it records
+older upstream releases. The source is deleted and not linked into the firmware.
+
+## Security and privacy hardening
+
+- Persistent warning logs omit peer names, key prefixes, private endpoint IPs
+  and endpoint ports.
+- The remote TCP console refuses to start without a configured admin password.
+- Secrets, OTA, factory reset, crash trigger and Tailscale identity reset always
+  require a password-authenticated session, even when the UI gate is disabled.
+- The compiled image contains no fixed telemetry, update or speed-test target.
+
+## Expected outbound traffic
+
+The remaining functional traffic is limited to:
+
+- the selected Tailscale/Headscale control plane, DERP and STUN endpoints;
+- NTP (`pool.ntp.org`) for time required by authenticated/TLS connections;
+- the operator-configured MQTT broker, only when MQTT is enabled;
+- targets explicitly requested by ping, traceroute, WOL or routed clients.
+
+No hidden path that adds tailnet devices or uploads local logs was found in the
+reviewed source or compiled image. Peers come from the configured control plane.
+This source audit is not a formal proof; tailnet and broker ACLs remain important.
+
+## Flashing
+
+`flash-package` contains tested binaries, Espressif's official standalone
+`esptool.exe`, and guided Windows batch files. See `flash-package/README.txt`.

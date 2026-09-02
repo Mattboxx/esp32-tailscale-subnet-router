@@ -450,6 +450,10 @@ when enabled by the operator, the configured MQTT broker. DNS, DHCP and NTP
 remain available as infrastructure needed to resolve and establish those
 connections. Diagnostic ping and traceroute run only when explicitly started.
 
+For the complete, explicit comparison with upstream `main`, see
+[`CUSTOM_BRANCH.md`](CUSTOM_BRANCH.md). A ready-to-use Windows flash package is
+documented in [`flash-package/README.txt`](flash-package/README.txt).
+
 ## Security
 
 Please report vulnerabilities privately — see [`SECURITY.md`](SECURITY.md).

@@ -1625,6 +1625,10 @@
           </div>
           <div class="stat-list">
             <div class="stat-row">
+              <span class="stat-label">Status</span>
+              <span class="stat-value" id="ap-runtime-status">—</span>
+            </div>
+            <div class="stat-row">
               <span class="stat-label">SSID</span>
               <span class="stat-value" id="ap-ssid">—</span>
             </div>
@@ -3299,6 +3303,10 @@
 
       // AP
       var ap = data.ap || {};
+      var apEnabled = ap.enabled !== false;
+      var apStatus = document.getElementById('ap-runtime-status');
+      apStatus.textContent = apEnabled ? 'Enabled' : 'Disabled';
+      apStatus.style.color = apEnabled ? 'var(--success)' : 'var(--text-muted)';
       document.getElementById('ap-ssid').textContent    = ap.ssid    || '—';
       document.getElementById('ap-ip').textContent      = ap.ip ? (ap.ip + (ap.prefix != null ? '/' + ap.prefix : '')) : '—';
       document.getElementById('ap-mac').textContent     = ap.mac     || '—';
@@ -3308,8 +3316,11 @@
         (typeof txp === 'number') ? (txp + ' (' + (txp * 0.25).toFixed(2) + ' dBm)') : '—';
       document.getElementById('ap-traffic').textContent = formatTraffic(ap.bytes_in, ap.bytes_out);
       var apClientsBadge = document.getElementById('ap-clients-badge');
-      apClientsBadge.textContent = (ap.clients != null ? ap.clients + ' client' + (ap.clients !== 1 ? 's' : '') : '—');
-      apClientsBadge.className = (typeof ap.clients === 'number' && ap.clients > 0) ? 'badge badge-success' : 'badge badge-neutral';
+      apClientsBadge.textContent = apEnabled
+        ? (ap.clients != null ? ap.clients + ' client' + (ap.clients !== 1 ? 's' : '') : '—')
+        : 'Disabled';
+      apClientsBadge.className = (apEnabled && typeof ap.clients === 'number' && ap.clients > 0) ? 'badge badge-success' : 'badge badge-neutral';
+      document.getElementById('card-ap').className = apEnabled ? 'card card-stripe-accent' : 'card';
 
       /* System tile — internal DRAM + SPIRAM bars, CPU load %, CPU temp.
        * Backend reports mem_internal_free/total, mem_spiram_free/total,
@@ -4355,9 +4366,12 @@
           var apClients = document.getElementById('net-ap-clients');
           var ap = (d && d.ap) || {};
           var clients = (typeof ap.clients === 'number') ? ap.clients : 0;
-          apBadge.className   = clients > 0 ? 'badge badge-success' : 'badge badge-neutral';
-          apBadge.textContent = clients === 1 ? '1 client' : (clients + ' clients');
-          apClients.textContent = clients + (ap.ip ? '   (AP IP: ' + ap.ip + ')' : '');
+          var apEnabled = ap.enabled !== false;
+          apBadge.className = (apEnabled && clients > 0) ? 'badge badge-success' : 'badge badge-neutral';
+          apBadge.textContent = apEnabled ? (clients === 1 ? '1 client' : (clients + ' clients')) : 'Disabled';
+          apClients.textContent = apEnabled
+            ? (clients + (ap.ip ? '   (AP IP: ' + ap.ip + ')' : ''))
+            : 'Access point disabled while the uplink is connected';
         }).catch(function () {});
 
       /* DHCP reservations + connected-client/lease snapshot. */

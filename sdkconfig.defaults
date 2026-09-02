@@ -21,7 +21,7 @@ CONFIG_SPIRAM_BOOT_HW_INIT=y
 # Execute-in-place from PSRAM: copy .text/.rodata to PSRAM at boot. Frees IRAM,
 # and — critically — keeps the cache LIVE during SPI1 flash ops (OTA/NVS), which
 # removes the flash-cache-disable crash hazard for code/data in PSRAM. That is
-# what makes PSRAM task stacks safe (see the dns_relay/telemetry workers, which
+# what makes PSRAM task stacks safe (see the DNS relay and MQTT workers, which
 # use xTaskCreateWithCaps(..., MALLOC_CAP_SPIRAM) to move ~21K of stacks off the
 # scarce internal DRAM). Costs ~1.4MB PSRAM (we have 8MB) + slightly longer boot.
 CONFIG_SPIRAM_XIP_FROM_PSRAM=y
@@ -93,7 +93,7 @@ CONFIG_LWIP_L2_TO_L3_COPY=y
 # + ping; the next consumer's socket() fails with EMFILE. 16 was tight for
 # normal use; once the AP-side DNS forwarder went default-on and the
 # operator started running a 2-minute speedtest cron from a client, peak
-# load (Ookla opens 8-16 parallel TCP streams + DNS forwarder + telemetry
+# load (Ookla opens 8-16 parallel TCP streams + DNS forwarder + MQTT
 # + WG + DERP + 2 httpd pools) blew past 16 and httpd logged
 # "httpd_accept_conn: error in accept (23)" — errno 23 = ENFILE. Up to 24.
 CONFIG_LWIP_MAX_SOCKETS=24
@@ -221,8 +221,8 @@ CONFIG_ESP_WIFI_TX_BA_WIN=32
 CONFIG_ESP_WIFI_AMSDU_TX_ENABLED=y
 
 # --- mbedTLS: cert bundle + PSRAM allocator ---------------------------------
-# Cert bundle is needed to validate *.workers.dev (and any other public
-# HTTPS endpoint) without shipping the certificates ourselves.
+# Cert bundle is needed for TLS-enabled Headscale and MQTT endpoints without
+# shipping a private CA bundle in the firmware.
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
 # mbedTLS allocations target internal RAM by default; with microlink +
