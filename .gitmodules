@@ -1,4 +1,4 @@
 [submodule "external/microlink"]
 	path = external/microlink
 	url = https://github.com/Mattboxx/microlink.git
-	branch = main
+	branch = mattboxx

@@ -9,7 +9,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform: ESP32-S3](https://img.shields.io/badge/platform-ESP32--S3-7c3aed.svg)](#hardware)
 [![ESP-IDF](https://img.shields.io/badge/ESP--IDF-5.5%2B-e7352c.svg)](https://docs.espressif.com/projects/esp-idf/)
-[![CodeQL](https://github.com/Csontikka/esp32-tailscale-subnet-router/actions/workflows/codeql.yml/badge.svg)](https://github.com/Csontikka/esp32-tailscale-subnet-router/actions/workflows/codeql.yml)
+[![CodeQL](https://github.com/Mattboxx/esp32-tailscale-subnet-router/actions/workflows/codeql.yml/badge.svg)](https://github.com/Mattboxx/esp32-tailscale-subnet-router/actions/workflows/codeql.yml)
 [![GitHub Sponsors](https://img.shields.io/badge/GitHub-Sponsor-ea4aaa.svg?style=plastic&logo=githubsponsors)](https://github.com/sponsors/Csontikka)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-donate-yellow.svg?style=plastic)](https://buymeacoffee.com/csontikka)
 
@@ -17,11 +17,22 @@
 
 ---
 
-> **Status — early access (`v0.1.9`).** Runs daily on the reference
-> ESP32-S3 hardware and the core paths (WiFi NAT, Tailscale subnet
-> routing, DERP fallback, exit nodes, firewall) are exercised
-> continuously. Treat it as a capable hobby build, not a hardened
-> appliance — see [Known limitations](#known-limitations).
+## Mattboxx edition — read this first
+
+This is the `0.1.19-Mattboxx` fork, based on upstream `v0.1.19` and built and
+flashed on a real ESP32-S3 N16R8. It is intentionally different from upstream:
+
+- adds a recovery-only/always-on AP policy, WOL address book, MQTT and extensive
+  Home Assistant controls, optional 4via6, and optional ntfy alerts/commands;
+- fixes WiFi scan/save failures (including HTTP 431) and the ntfy command-poll
+  reboot loop;
+- removes telemetry, external log/crash uploads, automatic GitHub update checks,
+  automatic downloads, Cloudflare speed tests and the hard-coded DNS fallback;
+- ships a ready-to-flash Windows ZIP and a single factory image in each release.
+
+See **[the complete added/removed/security comparison](CUSTOM_BRANCH.md)** before
+installing. This remains a hobby firmware rather than a formally audited network
+appliance; see [Known limitations](#known-limitations).
 
 ## What it is
 
@@ -148,12 +159,18 @@ traffic you route through it.)*
   inbound AP/routing/Tailscale/reconnect/restart/WOL commands, Last Will
   availability, and automatic Home Assistant discovery (including one Wake
   button per saved device).
+- **Optional Tailscale 4via6** — maps a configurable IPv4 LAN and site ID
+  into Tailscale's 4via6 prefix, advertises it alongside normal IPv4 routes,
+  and translates TCP, UDP and ICMP traffic in both directions.
+- **Optional ntfy integration** — alerts when the internet uplink works but
+  Tailscale remains down, includes a bounded local log tail, and accepts
+  replay-protected `info` and WOL commands. It is disabled by default.
 - **Robust by design** — encrypted config backup/restore, local-only manual
   OTA upload, per-sink (console + SD) log levels, auto AP-channel realign on
   STA roam, and pre-crash log capture.
 - **Private by design** — no usage reports, crash uploads, release polling,
   or automatic firmware downloads. Outbound application traffic is limited
-  to Tailscale and the MQTT broker explicitly configured by the operator.
+  to Tailscale and the MQTT/ntfy endpoints explicitly configured by the operator.
 
 ## Hardware
 
@@ -200,7 +217,7 @@ Real-world results from the field (see [#9](../../issues/9) and
 ### 1. Build & flash
 
 ```bash
-git clone --recurse-submodules https://github.com/Csontikka/esp32-tailscale-subnet-router
+git clone --recurse-submodules https://github.com/Mattboxx/esp32-tailscale-subnet-router
 cd esp32-tailscale-subnet-router
 
 # PlatformIO (recommended)
@@ -334,7 +351,7 @@ The single-page UI has seven sections:
 | **Tailscale** | Auth key, hostname, advertised routes, exit node, MTU, peer table |
 | **Firewall** | The four ACL chains, rule editor, hit counters |
 | **Diagnostics** | Route-explain, ping, traceroute, WiFi scan, live + SD logs |
-| **Automation** | Wake-on-LAN address book, MQTT status/commands, broker watchdog, Home Assistant discovery |
+| **Automation** | Wake-on-LAN address book, MQTT status/commands, broker watchdog, Home Assistant discovery, optional ntfy alerts and commands |
 | **System** | Device name, web password gate + idle timeout, manual firmware upload, SD-card logging, backup, danger zone, privacy status |
 
 ### Firewall / ACL
@@ -446,13 +463,14 @@ key); disable it for the tailnet or pre-authorize the node.
 This build contains no usage reporting, crash upload, release polling, or
 automatic firmware download. Crash summaries and logs stay on the device.
 The only application-level outbound connections are Tailscale/Headscale and,
-when enabled by the operator, the configured MQTT broker. DNS, DHCP and NTP
+when enabled by the operator, the configured MQTT broker and ntfy server. DNS, DHCP and NTP
 remain available as infrastructure needed to resolve and establish those
 connections. Diagnostic ping and traceroute run only when explicitly started.
 
 For the complete, explicit comparison with upstream `main`, see
 [`CUSTOM_BRANCH.md`](CUSTOM_BRANCH.md). A ready-to-use Windows flash package is
-documented in [`flash-package/README.txt`](flash-package/README.txt).
+available as [`ESP32-S3-router-0.1.19-Mattboxx-windows.zip`](flash-package/ESP32-S3-router-0.1.19-Mattboxx-windows.zip);
+instructions are in [`flash-package/README.txt`](flash-package/README.txt).
 
 ## Security
 

@@ -37,6 +37,8 @@
 #include "lwip/sys.h"
 
 #include "tailscale_config.h"
+#include "fourvia6.h"
+#include "ntfy_integration.h"
 #include "tailscale_mtu.h"
 #include "lwip_route_hook.h"
 #include "web_ui.h"
@@ -892,6 +894,9 @@ void app_main(void)
     /* Tailscale (microlink) settings — separate NVS keys (ts_*); loader
      * lives in tailscale_manager.c. Microlink lifecycle wires in later
      * once WiFi STA has an IP. */
+    /* Load 4via6 first: tailscale_init/connect includes its calculated
+     * IPv6 prefix in Hostinfo.RoutableIPs only when the feature is enabled. */
+    fourvia6_init();
     tailscale_init();
 
     /* MTU / MSS clamp / PMTU manager. Owns the wg netif MTU plus the AP
@@ -1037,6 +1042,7 @@ void app_main(void)
     dhcp_reservations_init();
     wol_init();
     mqtt_integration_init();
+    ntfy_integration_init();
 
     /* Apply POSIX timezone before SNTP runs — so the first time-of-day
      * print after the first sync renders in local time. Empty NVS value

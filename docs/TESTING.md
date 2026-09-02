@@ -60,7 +60,7 @@ the bottom by module.
 
 ### `spa` — Web UI smoke
 Logs in, walks every tab (Status / Network / Tailscale / Firewall /
-System / Tools), asserts that each tab renders at least one `.card`,
+Automation / System / Tools), asserts that each tab renders at least one `.card`,
 no input is flagged red on first render (the pristine-validator bug),
 the IDs `#ts-routes` and `#ts-hostname` are unique (a previous trap
 because of duplicate IDs between the Status preview and the editor),

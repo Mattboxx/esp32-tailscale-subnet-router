@@ -5,7 +5,7 @@ from .common import Context, Result, SpaClient, check
 MODULE_ID = "spa"
 MODULE_DESC = "Web UI: login, each tab renders, no JS errors, no spurious red validators"
 
-TABS = ["status", "network", "tailscale", "firewall", "system", "tools"]
+TABS = ["status", "network", "tailscale", "firewall", "automation", "system", "tools"]
 
 
 def run(ctx: Context) -> list[Result]:

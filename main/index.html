@@ -1926,9 +1926,9 @@
           </div>
           <div class="form-group" style="margin-top:0.25rem;">
             <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
-              <input type="checkbox" id="net-ap-auto-off"> Recovery-only AP (turn off while uplink is connected)
+              <input type="checkbox" id="net-ap-uplink-enabled"> Keep access point enabled while an uplink is connected
             </label>
-            <span class="form-hint">Recommended when this device only exposes the uplink LAN to Tailscale. The AP turns off after STA gets an IP and automatically returns if the uplink drops, so configuration remains recoverable.</span>
+            <span class="form-hint">Turn this off to disable the AP while WiFi/Ethernet is connected. The recovery AP always comes back automatically if every uplink is lost.</span>
           </div>
           <div class="form-group" style="margin-top:0.25rem;">
             <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
@@ -2145,6 +2145,21 @@
             <label class="form-label" for="ts-routes">Advertised Subnet Routes</label>
             <textarea class="textarea input" id="ts-routes" placeholder="192.168.4.0/24" style="min-height:5rem; font-family:var(--font-mono); font-size:0.9rem;"></textarea>
             <span class="form-hint">One CIDR per line.</span>
+          </div>
+
+          <div class="form-group" style="padding-top:0.75rem; border-top:1px solid var(--border);">
+            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+              <input type="checkbox" id="ts-4via6-enabled"> Enable 4via6 subnet routing
+            </label>
+            <span class="form-hint">Optional support for overlapping IPv4 LANs through Tailscale's <code class="mono">fd7a:115c:a1e0:b1a::/64</code> mapping. Disabled by default and compatible with the normal IPv4 routes above.</span>
+          </div>
+          <div id="ts-4via6-fields" style="display:none;">
+            <div class="grid grid-cols-2">
+              <div class="form-group"><label class="form-label" for="ts-4via6-lan">IPv4 LAN CIDR</label><input class="input mono" id="ts-4via6-lan" placeholder="192.168.1.0/24"></div>
+              <div class="form-group"><label class="form-label" for="ts-4via6-site">Site ID (0–65535)</label><input class="input mono" type="number" id="ts-4via6-site" min="0" max="65535" value="0"></div>
+            </div>
+            <div class="form-group"><label class="form-label">Calculated advertised prefix</label><div class="input mono" id="ts-4via6-prefix" style="user-select:all;">—</div></div>
+            <div class="form-hint mono" id="ts-4via6-status">Disabled</div>
           </div>
 
           <div class="form-group">
@@ -2577,6 +2592,34 @@
             <button class="btn btn-secondary btn-md" id="mqtt-reload" type="button">Reload</button>
             <button class="btn btn-primary btn-md" id="mqtt-save" type="button" disabled>Save</button>
           </div>
+        </div>
+      </div>
+
+      <!-- ===== ntfy alerts and commands ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left"><span class="card-title">ntfy alerts &amp; commands</span></div>
+          <span class="badge badge-neutral" id="ntfy-badge">Disabled</span>
+        </div>
+        <div class="card-body">
+          <div class="form-group"><label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;"><input type="checkbox" id="ntfy-enabled"> Enable ntfy integration</label><span class="form-hint">No ntfy traffic is sent while disabled. Prefer a self-hosted server or a private, access-controlled topic.</span></div>
+          <div class="grid grid-cols-2">
+            <div class="form-group"><label class="form-label" for="ntfy-server">Server URL</label><input class="input mono" id="ntfy-server" value="https://ntfy.sh"></div>
+            <div class="form-group"><label class="form-label" for="ntfy-topic">Topic</label><input class="input mono" id="ntfy-topic" placeholder="private-random-topic"></div>
+          </div>
+          <div class="form-group"><label class="form-label" for="ntfy-token">Access token</label><input class="input" type="password" id="ntfy-token" autocomplete="new-password" placeholder="Optional — leave empty to keep"><label class="form-hint" style="display:flex;gap:0.35rem;align-items:center;"><input type="checkbox" id="ntfy-token-clear"> Clear saved token</label></div>
+          <div class="grid grid-cols-2">
+            <div class="form-group"><label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;"><input type="checkbox" id="ntfy-alerts"> Alert when internet works but Tailscale stays down</label><label class="form-label" for="ntfy-delay" style="margin-top:0.5rem;">Failure delay (seconds)</label><input class="input mono" type="number" id="ntfy-delay" min="15" max="3600" value="120"></div>
+            <div class="form-group"><label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;"><input type="checkbox" id="ntfy-commands"> Receive remote commands</label><label class="form-label" for="ntfy-poll" style="margin-top:0.5rem;">Poll interval (seconds)</label><input class="input mono" type="number" id="ntfy-poll" min="5" max="300" value="15"></div>
+          </div>
+          <div class="form-group"><label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;"><input type="checkbox" id="ntfy-down-only"> Poll commands only while Tailscale is down</label></div>
+          <div class="form-group"><label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;"><input type="checkbox" id="ntfy-info"> Allow <code class="mono">info</code> command</label><span class="form-hint">Replies on the same topic with operational state, local/tailnet IPs, peers, AP clients and saved WOL targets. Credentials and tokens are always excluded.</span></div>
+          <div class="form-group"><label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;"><input type="checkbox" id="ntfy-direct-mac"> Allow <code class="mono">wol aa:bb:cc:dd:ee:ff</code> for unsaved MAC addresses</label><span class="form-hint">When off, <code class="mono">wol DEVICE_NAME</code> and saved MAC addresses still work.</span></div>
+          <div class="form-hint mono" id="ntfy-status">Commands: info · wol DEVICE_NAME · wol aa:bb:cc:dd:ee:ff</div>
+        </div>
+        <div class="form-footer">
+          <span class="form-footer-hint">Alerts include a recent local log tail. ntfy and its server can see message contents when enabled.</span>
+          <div class="form-footer-actions"><button class="btn btn-ghost btn-md" id="ntfy-test">Send test</button><button class="btn btn-secondary btn-md" id="ntfy-reload">Reload</button><button class="btn btn-primary btn-md" id="ntfy-save" disabled>Save</button></div>
         </div>
       </div>
     </div>
@@ -3040,6 +3083,7 @@
         if (page === 'automation') {
           if (typeof loadWol  === 'function') loadWol();
           if (typeof loadMqtt === 'function') loadMqtt();
+          if (typeof loadNtfy === 'function') loadNtfy();
         }
         if (page === 'system'    && typeof loadSystem    === 'function') loadSystem();
         if (page === 'tools'     && typeof loadDiag      === 'function') loadDiag();
@@ -4340,7 +4384,7 @@
             drb.textContent = 'unhealthy'; drb.className = 'badge badge-warning';
           }
           document.getElementById('net-ap-hidden').checked  = !!ap.hidden;
-          document.getElementById('net-ap-auto-off').checked = !!ap.auto_off_when_connected;
+          document.getElementById('net-ap-uplink-enabled').checked = !ap.auto_off_when_connected;
           document.getElementById('net-ap-save').disabled   = true;
         }).catch(function () {});
 
@@ -4650,7 +4694,7 @@
     document.getElementById('net-ap-hidden').addEventListener('change', function () {
       document.getElementById('net-ap-save').disabled = false;
     });
-    document.getElementById('net-ap-auto-off').addEventListener('change', function () {
+    document.getElementById('net-ap-uplink-enabled').addEventListener('change', function () {
       document.getElementById('net-ap-save').disabled = false;
     });
     document.getElementById('net-ap-reload').addEventListener('click', loadNetwork);
@@ -4669,7 +4713,7 @@
         ap: {
           ssid: ssid, ip: ip, mask: mask, dns: dns,
           hidden: document.getElementById('net-ap-hidden').checked,
-          auto_off_when_connected: document.getElementById('net-ap-auto-off').checked,
+          auto_off_when_connected: !document.getElementById('net-ap-uplink-enabled').checked,
           dns_relay: {
             enabled:  document.getElementById('net-ap-dns-relay-enabled').checked,
             upstream: document.getElementById('net-ap-dns-relay-upstream').value.trim()
@@ -5356,6 +5400,30 @@
     // =====================================================================
     // TAILSCALE PAGE
     // =====================================================================
+    function update4via6Preview() {
+      var enabled = document.getElementById('ts-4via6-enabled').checked;
+      var fields = document.getElementById('ts-4via6-fields');
+      fields.style.display = enabled ? '' : 'none';
+      var cidr = document.getElementById('ts-4via6-lan').value.trim();
+      var site = parseInt(document.getElementById('ts-4via6-site').value, 10);
+      var match = cidr.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)\/(\d+)$/);
+      var prefix = '—';
+      if (match && site >= 0 && site <= 65535) {
+        var octets = match.slice(1,5).map(Number), bits = Number(match[5]);
+        if (bits >= 0 && bits <= 32 && octets.every(function (v) { return v >= 0 && v <= 255; })) {
+          var raw = ((octets[0] * 0x1000000) + (octets[1] << 16) + (octets[2] << 8) + octets[3]) >>> 0;
+          var mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
+          var net = (raw & mask) >>> 0;
+          var a=(net>>>24)&255,b=(net>>>16)&255,c=(net>>>8)&255,d=net&255;
+          prefix = 'fd7a:115c:a1e0:b1a:0:' + site.toString(16) + ':'
+                 + ((a<<8)|b).toString(16) + ':' + ((c<<8)|d).toString(16)
+                 + '/' + (96 + bits);
+        }
+      }
+      document.getElementById('ts-4via6-prefix').textContent = prefix;
+      return prefix;
+    }
+
     function loadTailscale() {
       apiFetch('/api/tailscale')
         .then(function (r) { return r.json(); })
@@ -5398,6 +5466,15 @@
           document.getElementById('ts-accept-routes').checked = !!s.accept_routes;
           document.getElementById('ts-lan-bypass').checked    = !!s.lan_bypass;
           document.getElementById('ts-snat').checked          = !!s.snat_subnet_routes;
+          var v6 = s.fourvia6 || {};
+          document.getElementById('ts-4via6-enabled').checked = !!v6.enabled;
+          document.getElementById('ts-4via6-lan').value = v6.lan_cidr || '';
+          document.getElementById('ts-4via6-site').value = (typeof v6.site_id === 'number') ? v6.site_id : 0;
+          update4via6Preview();
+          document.getElementById('ts-4via6-status').textContent = v6.enabled
+            ? ('Enabled · ' + (v6.advertised_prefix || 'invalid prefix') + ' · active flows: ' + (v6.active_flows || 0)
+               + ' · translated: ' + (v6.translated_packets || 0) + ' · dropped: ' + (v6.dropped_packets || 0))
+            : 'Disabled';
 
           /* Exit-node picker — populated from peers that advertise 0/0. */
           /* Strip the common tailnet suffix (everything after the first
@@ -5562,12 +5639,14 @@
 
     /* Dirty-track and wiring. */
     ['ts_enabled_on', 'ts_enabled_off', 'ts-auth-key', 'ts-hostname', 'ts-login',
-     'ts-routes', 'ts-max-peers', 'ts-accept-routes', 'ts-lan-bypass', 'ts-snat', 'ts-exit-node'
+     'ts-routes', 'ts-max-peers', 'ts-accept-routes', 'ts-lan-bypass', 'ts-snat', 'ts-exit-node',
+     'ts-4via6-enabled', 'ts-4via6-lan', 'ts-4via6-site'
     ].forEach(function (id) {
       var el = document.getElementById(id);
       var ev = (el.tagName === 'SELECT' || el.type === 'checkbox' || el.type === 'radio')
                ? 'change' : 'input';
       el.addEventListener(ev, function () {
+        if (id.indexOf('ts-4via6-') === 0) update4via6Preview();
         document.getElementById('ts-save').disabled = false;
       });
     });
@@ -5696,7 +5775,12 @@
           accept_routes:     document.getElementById('ts-accept-routes').checked,
           lan_bypass:        document.getElementById('ts-lan-bypass').checked,
           snat_subnet_routes: document.getElementById('ts-snat').checked,
-          exit_node_ip:      document.getElementById('ts-exit-node').value
+          exit_node_ip:      document.getElementById('ts-exit-node').value,
+          fourvia6: {
+            enabled: document.getElementById('ts-4via6-enabled').checked,
+            lan_cidr: document.getElementById('ts-4via6-lan').value.trim(),
+            site_id: parseInt(document.getElementById('ts-4via6-site').value, 10) || 0
+          }
         }
       };
       var authKey = document.getElementById('ts-auth-key').value;
@@ -6359,6 +6443,73 @@
       });
     });
 
+    function loadNtfy() {
+      apiFetch('/api/ntfy').then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      }).then(function (d) {
+        document.getElementById('ntfy-enabled').checked = !!d.enabled;
+        document.getElementById('ntfy-server').value = d.server || 'https://ntfy.sh';
+        document.getElementById('ntfy-topic').value = d.topic || '';
+        document.getElementById('ntfy-token').value = '';
+        document.getElementById('ntfy-token').placeholder = d.has_token ? 'Saved — leave empty to keep' : 'Optional';
+        document.getElementById('ntfy-token-clear').checked = false;
+        document.getElementById('ntfy-alerts').checked = !!d.tailscale_alerts;
+        document.getElementById('ntfy-commands').checked = !!d.commands_enabled;
+        document.getElementById('ntfy-down-only').checked = !!d.commands_only_when_tailscale_down;
+        document.getElementById('ntfy-direct-mac').checked = !!d.allow_direct_mac;
+        document.getElementById('ntfy-info').checked = !!d.info_enabled;
+        document.getElementById('ntfy-delay').value = d.failure_delay_seconds || 120;
+        document.getElementById('ntfy-poll').value = d.poll_interval_seconds || 15;
+        var badge = document.getElementById('ntfy-badge');
+        badge.textContent = d.enabled ? (d.last_publish_ok ? 'Enabled · reachable' : 'Enabled') : 'Disabled';
+        badge.className = 'badge ' + (!d.enabled ? 'badge-neutral' : (d.last_publish_ok ? 'badge-success' : 'badge-warning'));
+        document.getElementById('ntfy-status').textContent = 'Commands: info · wol DEVICE_NAME · wol aa:bb:cc:dd:ee:ff · alerts: '
+          + (d.alerts_sent || 0) + ' · commands: ' + (d.commands_received || 0) + ' · errors: ' + (d.command_errors || 0);
+        document.getElementById('ntfy-save').disabled = true;
+      }).catch(function () {
+        var badge=document.getElementById('ntfy-badge'); badge.textContent='Unavailable'; badge.className='badge badge-danger';
+      });
+    }
+    ['ntfy-enabled','ntfy-server','ntfy-topic','ntfy-token','ntfy-token-clear','ntfy-alerts',
+     'ntfy-commands','ntfy-down-only','ntfy-direct-mac','ntfy-info','ntfy-delay','ntfy-poll'].forEach(function(id) {
+      var el=document.getElementById(id);
+      el.addEventListener(el.type === 'checkbox' ? 'change' : 'input', function() {
+        document.getElementById('ntfy-save').disabled=false;
+      });
+    });
+    document.getElementById('ntfy-reload').addEventListener('click', loadNtfy);
+    document.getElementById('ntfy-test').addEventListener('click', function() {
+      var btn=this; btn.disabled=true;
+      apiFetch('/api/ntfy/test',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+        showToast(d.ok?'success':'error', d.ok?'ntfy test sent':'ntfy test failed', d.ok?'Check the configured topic.':'Save and verify the server, topic and token.',5000);
+      }).catch(function(){showToast('error','ntfy test failed','Network error.',5000);}).finally(function(){btn.disabled=false;});
+    });
+    document.getElementById('ntfy-save').addEventListener('click', function() {
+      var body={
+        enabled:document.getElementById('ntfy-enabled').checked,
+        server:document.getElementById('ntfy-server').value.trim().replace(/\/+$/,''),
+        topic:document.getElementById('ntfy-topic').value.trim(),
+        clear_token:document.getElementById('ntfy-token-clear').checked,
+        tailscale_alerts:document.getElementById('ntfy-alerts').checked,
+        commands_enabled:document.getElementById('ntfy-commands').checked,
+        commands_only_when_tailscale_down:document.getElementById('ntfy-down-only').checked,
+        allow_direct_mac:document.getElementById('ntfy-direct-mac').checked,
+        info_enabled:document.getElementById('ntfy-info').checked,
+        failure_delay_seconds:parseInt(document.getElementById('ntfy-delay').value,10),
+        poll_interval_seconds:parseInt(document.getElementById('ntfy-poll').value,10)
+      };
+      var token=document.getElementById('ntfy-token').value; if(token) body.token=token;
+      if(body.enabled && (!/^https?:\/\//.test(body.server) || !/^[A-Za-z0-9_-]+$/.test(body.topic))) {
+        showToast('error','Invalid ntfy settings','Use an HTTP(S) server and a topic containing letters, numbers, - or _.',5000); return;
+      }
+      var btn=this; btn.disabled=true; btn.textContent='Saving…';
+      apiFetch('/api/ntfy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+        .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+        .then(function(){btn.textContent='Save';showToast('success','ntfy saved','Settings applied live.',4000);loadNtfy();})
+        .catch(function(e){btn.textContent='Save';btn.disabled=false;showToast('error','ntfy save failed',e.message||'',5000);});
+    });
+
     function loadSystem() {
       apiFetch('/api/system')
         .then(function (r) { return r.json(); })
@@ -6684,14 +6835,14 @@
 
     /* Pull every config-bearing GET endpoint and merge into one JSON
      * file the operator can download. WiFi/AP/EAP passwords + Tailscale
-     * auth key and MQTT password are pulled via /api/system/secrets and encrypted with the
+     * auth key, MQTT password and ntfy token are pulled via /api/system/secrets and encrypted with the
      * operator passphrase before being spliced into the backup as
      * `secrets_encrypted`. With Include secrets unchecked the file lands
      * secret-free, same as before. */
     document.getElementById('sys-config-backup').addEventListener('click', function () {
       showConfirm(
         'Download config backup',
-        '<p style="margin:0 0 0.75rem 0;">Secrets (WiFi/AP/EAP/MQTT passwords + Tailscale auth key) are encrypted with your passphrase. You need the same passphrase to restore them on this or another device.</p>' +
+        '<p style="margin:0 0 0.75rem 0;">Secrets (WiFi/AP/EAP/MQTT passwords, Tailscale auth key and ntfy token) are encrypted with your passphrase. You need the same passphrase to restore them on this or another device.</p>' +
         '<label style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.75rem; cursor:pointer;">' +
           '<input type="checkbox" id="backup-include-secrets" checked> Include encrypted secrets' +
         '</label>' +
@@ -6745,7 +6896,8 @@
         apiFetch('/api/tailscale')         .then(function (r) { return r.json(); }),
         apiFetch('/api/firewall')          .then(function (r) { return r.json(); }),
         apiFetch('/api/wol')               .then(function (r) { return r.json(); }),
-        apiFetch('/api/mqtt')              .then(function (r) { return r.json(); })
+        apiFetch('/api/mqtt')              .then(function (r) { return r.json(); }),
+        apiFetch('/api/ntfy')              .then(function (r) { return r.json(); })
       ];
       if (includeSecrets) {
         fetches.push(apiFetch('/api/system/secrets').then(function (r) {
@@ -6767,6 +6919,12 @@
         delete mqtt.broker_watchdog_triggered;
         delete mqtt.broker_watchdog_wake_count;
         delete mqtt.broker_silence_seconds;
+        var ntfy = parts[8] || {};
+        delete ntfy.has_token;
+        delete ntfy.last_publish_ok;
+        delete ntfy.alerts_sent;
+        delete ntfy.commands_received;
+        delete ntfy.command_errors;
         var backup = {
           format:        'tsr-backup-v1',
           exported_at:   new Date().toISOString(),
@@ -6778,11 +6936,12 @@
           tailscale:     ts,
           firewall:      parts[5] || {},
           wol:           (parts[6] && parts[6].devices) || [],
-          mqtt:          mqtt
+          mqtt:          mqtt,
+          ntfy:          ntfy
         };
         var step = Promise.resolve();
         if (includeSecrets) {
-          var secrets = parts[8] || {};
+          var secrets = parts[9] || {};
           step = encryptSecretsBundle(secrets, passphrase).then(function (enc) {
             backup.secrets_encrypted = enc;
           });
@@ -6837,7 +6996,7 @@
           '<p style="margin:0 0 0.75rem 0;">Replaces networks, AP settings, DHCP reservations, port mappings, Tailscale settings and system block.</p>' +
           (hasSecrets
             ? '<label style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.75rem; cursor:pointer;">' +
-                '<input type="checkbox" id="restore-include-secrets" checked> Decrypt and restore encrypted secrets (WiFi/AP/MQTT passwords + Tailscale auth key)' +
+                '<input type="checkbox" id="restore-include-secrets" checked> Decrypt and restore encrypted secrets (WiFi/AP/MQTT passwords, Tailscale auth key and ntfy token)' +
               '</label>' +
               '<div id="restore-passphrase-block">' +
                 '<div class="form-group">' +
@@ -6905,6 +7064,10 @@
         steps.push({ name: 'tailscale', url: '/api/tailscale', body: { settings: ts } });
       }
       if (data.mqtt) steps.push({ name: 'MQTT', url: '/api/mqtt', body: data.mqtt });
+      if (data.ntfy) {
+        delete data.ntfy.token; /* secret only restored via encrypted block */
+        steps.push({ name: 'ntfy', url: '/api/ntfy', body: data.ntfy });
+      }
 
       /* Firewall — backup includes every list's rules, but until now the
        * restore flow silently dropped them. Re-apply by clearing each
@@ -7232,6 +7395,7 @@
     document.getElementById('automation-reload').addEventListener('click', function () {
       loadWol();
       loadMqtt();
+      loadNtfy();
     });
 
     document.getElementById('sys-reload').addEventListener('click', loadSystem);

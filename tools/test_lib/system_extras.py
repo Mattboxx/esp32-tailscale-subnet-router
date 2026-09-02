@@ -9,6 +9,7 @@ after the original test_lib was written:
   auto-poll + interval; /api/system/ota/poll responds with a status
   string (typically "github http 404" until a release is published).
 * STA TTL override: /api/network round-trip on sta_ttl_override.
+* 4via6 and ntfy API shape, including the write-only ntfy token contract.
 * About card sanity — the SPA exposes the version + Tailscale stack
   hint, and the /api/system version field is non-empty.
 
@@ -21,7 +22,7 @@ import time
 from .common import Context, Result, SpaClient, check, skip
 
 MODULE_ID = "system_extras"
-MODULE_DESC = "reset_history + precrash + OTA + STA TTL + About"
+MODULE_DESC = "reset_history + precrash + OTA + STA TTL + 4via6 + ntfy + About"
 
 
 def _system(spa: SpaClient) -> dict:
@@ -162,6 +163,22 @@ def run(ctx: Context) -> list[Result]:
 
         # ---------------- MTU manager round-trip ----------------
         ts = spa.fetch_json("/api/tailscale") or {}
+        fourvia6 = (ts.get("settings") or {}).get("fourvia6")
+        fourvia6_keys = {"enabled", "lan_cidr", "site_id", "advertised_prefix",
+                         "translated_packets", "dropped_packets", "active_flows"}
+        check(results, MODULE_ID, "4via6 API shape",
+              isinstance(fourvia6, dict) and fourvia6_keys.issubset(fourvia6.keys()),
+              f"got {fourvia6!r}")
+
+        ntfy = spa.fetch_json("/api/ntfy") or {}
+        ntfy_keys = {"enabled", "server", "topic", "has_token", "tailscale_alerts",
+                     "commands_enabled", "commands_only_when_tailscale_down",
+                     "allow_direct_mac", "info_enabled", "failure_delay_seconds",
+                     "poll_interval_seconds"}
+        check(results, MODULE_ID, "ntfy API shape and write-only token",
+              ntfy_keys.issubset(ntfy.keys()) and "token" not in ntfy,
+              f"keys={sorted(ntfy.keys())}")
+
         mtu = ts.get("mtu")
         if not isinstance(mtu, dict):
             skip(results, MODULE_ID, "MTU manager block absent",

@@ -31,6 +31,8 @@
 #include "wifi_networks.h"
 #include "wol.h"
 #include "mqtt_integration.h"
+#include "ntfy_integration.h"
+#include "fourvia6.h"
 #include "dhcp_reservations.h"
 #include "dhcps_ext.h"
 #include "portmap.h"
@@ -1935,6 +1937,94 @@ static const httpd_uri_t uri_mqtt_publish = {
     .uri = "/api/mqtt/publish", .method = HTTP_POST, .handler = mqtt_publish_handler,
 };
 
+/* GET/POST /api/ntfy — token is write-only and never leaves the device. */
+static esp_err_t ntfy_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    ntfy_integration_config_t c;
+    ntfy_integration_status_t st;
+    ntfy_integration_get_config(&c);
+    ntfy_integration_get_status(&st);
+    cJSON *root = cJSON_CreateObject();
+    if (!root) { httpd_resp_send_500(req); return ESP_FAIL; }
+    cJSON_AddBoolToObject(root, "enabled", c.enabled);
+    cJSON_AddStringToObject(root, "server", c.server);
+    cJSON_AddStringToObject(root, "topic", c.topic);
+    cJSON_AddBoolToObject(root, "has_token", c.token[0] != '\0');
+    cJSON_AddBoolToObject(root, "tailscale_alerts", c.tailscale_alerts);
+    cJSON_AddBoolToObject(root, "commands_enabled", c.commands_enabled);
+    cJSON_AddBoolToObject(root, "commands_only_when_tailscale_down",
+                          c.commands_only_when_tailscale_down);
+    cJSON_AddBoolToObject(root, "allow_direct_mac", c.allow_direct_mac);
+    cJSON_AddBoolToObject(root, "info_enabled", c.info_enabled);
+    cJSON_AddNumberToObject(root, "failure_delay_seconds", c.failure_delay_seconds);
+    cJSON_AddNumberToObject(root, "poll_interval_seconds", c.poll_interval_seconds);
+    cJSON_AddBoolToObject(root, "last_publish_ok", st.last_publish_ok);
+    cJSON_AddNumberToObject(root, "alerts_sent", st.alerts_sent);
+    cJSON_AddNumberToObject(root, "commands_received", st.commands_received);
+    cJSON_AddNumberToObject(root, "command_errors", st.command_errors);
+    char *body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!body) { httpd_resp_send_500(req); return ESP_FAIL; }
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, body);
+    free(body);
+    return err;
+}
+
+static esp_err_t ntfy_save_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    char *buf = malloc_body_buf(3072);
+    if (!buf) { httpd_resp_send_500(req); return ESP_FAIL; }
+    if (recv_body(req, buf, 3072, NULL) != ESP_OK) { free(buf); return ESP_FAIL; }
+    cJSON *root = cJSON_Parse(buf);
+    free(buf);
+    if (!root) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid JSON"); return ESP_FAIL; }
+    ntfy_integration_config_t c;
+    ntfy_integration_get_config(&c);
+    cJSON *item;
+#define NTFY_STRING(key, field) do { item=cJSON_GetObjectItem(root,(key)); \
+    if (cJSON_IsString(item)) strlcpy((field),item->valuestring,sizeof(field)); } while(0)
+#define NTFY_BOOL(key, field) do { item=cJSON_GetObjectItem(root,(key)); \
+    if (cJSON_IsBool(item)) (field)=cJSON_IsTrue(item); } while(0)
+    NTFY_STRING("server", c.server); NTFY_STRING("topic", c.topic);
+    item = cJSON_GetObjectItem(root, "token");
+    if (cJSON_IsString(item) && item->valuestring[0]) strlcpy(c.token, item->valuestring, sizeof c.token);
+    if (cJSON_IsTrue(cJSON_GetObjectItem(root, "clear_token"))) c.token[0] = '\0';
+    NTFY_BOOL("enabled", c.enabled); NTFY_BOOL("tailscale_alerts", c.tailscale_alerts);
+    NTFY_BOOL("commands_enabled", c.commands_enabled);
+    NTFY_BOOL("commands_only_when_tailscale_down", c.commands_only_when_tailscale_down);
+    NTFY_BOOL("allow_direct_mac", c.allow_direct_mac); NTFY_BOOL("info_enabled", c.info_enabled);
+#undef NTFY_STRING
+#undef NTFY_BOOL
+    item=cJSON_GetObjectItem(root,"failure_delay_seconds");
+    if(cJSON_IsNumber(item)) c.failure_delay_seconds=(uint16_t)item->valueint;
+    item=cJSON_GetObjectItem(root,"poll_interval_seconds");
+    if(cJSON_IsNumber(item)) c.poll_interval_seconds=(uint16_t)item->valueint;
+    cJSON_Delete(root);
+    esp_err_t err = ntfy_integration_set_config(&c);
+    if (err != ESP_OK) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid ntfy settings"); return ESP_FAIL; }
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+static esp_err_t ntfy_test_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    esp_err_t err = ntfy_integration_send_test();
+    httpd_resp_set_type(req, "application/json");
+    if (err != ESP_OK) httpd_resp_set_status(req, "503 Service Unavailable");
+    return httpd_resp_sendstr(req, err == ESP_OK ? "{\"ok\":true}" : "{\"ok\":false}");
+}
+
+static const httpd_uri_t uri_ntfy = {
+    .uri="/api/ntfy",.method=HTTP_GET,.handler=ntfy_handler };
+static const httpd_uri_t uri_ntfy_save = {
+    .uri="/api/ntfy",.method=HTTP_POST,.handler=ntfy_save_handler };
+static const httpd_uri_t uri_ntfy_test = {
+    .uri="/api/ntfy/test",.method=HTTP_POST,.handler=ntfy_test_handler };
+
 static esp_err_t dhcp_reservations_handler(httpd_req_t *req)
 {
     if (require_auth(req) != ESP_OK) return ESP_FAIL;
@@ -2747,6 +2837,16 @@ static esp_err_t tailscale_handler(httpd_req_t *req)
     if (tailscale_hostname)         cJSON_AddStringToObject(settings, "hostname",       tailscale_hostname);
     if (tailscale_login_server)     cJSON_AddStringToObject(settings, "login_server",   tailscale_login_server);
     if (tailscale_advertise_routes) cJSON_AddStringToObject(settings, "advertise_routes", tailscale_advertise_routes);
+    fourvia6_status_t v6;
+    fourvia6_get_status(&v6);
+    cJSON *v6j = cJSON_AddObjectToObject(settings, "fourvia6");
+    cJSON_AddBoolToObject(v6j, "enabled", v6.enabled);
+    cJSON_AddStringToObject(v6j, "lan_cidr", v6.lan_cidr);
+    cJSON_AddNumberToObject(v6j, "site_id", v6.site_id);
+    cJSON_AddStringToObject(v6j, "advertised_prefix", v6.advertised_prefix);
+    cJSON_AddNumberToObject(v6j, "translated_packets", v6.translated_packets);
+    cJSON_AddNumberToObject(v6j, "dropped_packets", v6.dropped_packets);
+    cJSON_AddNumberToObject(v6j, "active_flows", v6.active_flows);
     cJSON_AddNumberToObject(settings, "max_peers",               tailscale_max_peers);
     cJSON_AddNumberToObject(settings, "default_derp_region",     tailscale_default_derp_region);
     cJSON_AddBoolToObject  (settings, "netcheck_override",       tailscale_netcheck_override != 0);
@@ -2920,7 +3020,7 @@ static esp_err_t tailscale_save_handler(httpd_req_t *req)
     nvs_save_errors_reset();
 
     /* Heap-allocate the body buffer — see network_save_handler comment. */
-    size_t buf_size = 2048;
+    size_t buf_size = 3072;
     char *buf = malloc_body_buf(buf_size);
     if (!buf) { httpd_resp_send_500(req); return ESP_FAIL; }
     if (recv_body(req, buf, buf_size, NULL) != ESP_OK) { free(buf); return ESP_FAIL; }
@@ -3019,6 +3119,26 @@ static esp_err_t tailscale_save_handler(httpd_req_t *req)
                 uint32_t hbo = lwip_ntohl(a.addr);
                 nvs_save_int("ts_exit_node", (int32_t)hbo);
                 tailscale_exit_node_ip = hbo;
+            }
+        }
+
+        const cJSON *v6j = cJSON_GetObjectItem(s, "fourvia6");
+        if (cJSON_IsObject(v6j)) {
+            fourvia6_status_t current;
+            fourvia6_get_status(&current);
+            const cJSON *en = cJSON_GetObjectItem(v6j, "enabled");
+            const cJSON *lan = cJSON_GetObjectItem(v6j, "lan_cidr");
+            const cJSON *site = cJSON_GetObjectItem(v6j, "site_id");
+            bool enabled4 = cJSON_IsBool(en) ? cJSON_IsTrue(en) : current.enabled;
+            const char *lan4 = cJSON_IsString(lan) ? lan->valuestring : current.lan_cidr;
+            int site4 = cJSON_IsNumber(site) ? site->valueint : current.site_id;
+            char error[96] = "invalid 4via6 settings";
+            if (site4 < 0 || site4 > 65535
+                || fourvia6_set_config(enabled4, lan4, (uint16_t)site4,
+                                       error, sizeof error) != ESP_OK) {
+                cJSON_Delete(root);
+                httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, error);
+                return ESP_FAIL;
             }
         }
     }
@@ -3422,6 +3542,11 @@ static esp_err_t system_secrets_get_handler(httpd_req_t *req)
         cJSON_AddStringToObject(root, "mqtt_password", s ? s : "");
         free(s);
     }
+    {
+        char *s = nvs_param_get_str("ntfy_token");
+        cJSON_AddStringToObject(root, "ntfy_token", s ? s : "");
+        free(s);
+    }
 
     /* Full network table including PSK + EAP credentials. Mirrors the
      * wifi_network_t layout so a round-trip restore reproduces the
@@ -3482,6 +3607,7 @@ static esp_err_t system_secrets_post_handler(httpd_req_t *req)
     save_str_if_present(root, "auth_key",    "ts_authkey");
     save_str_if_present(root, "ap_password", "ap_passwd");
     save_str_if_present(root, "mqtt_password", "mqtt_pass");
+    save_str_if_present(root, "ntfy_token", "ntfy_token");
 
     /* Network array — only rewrite NVS when the client actually sent one,
      * so a partial restore (e.g. just the auth_key) doesn't wipe the
@@ -4525,6 +4651,9 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_mqtt);
     httpd_register_uri_handler(server, &uri_mqtt_save);
     httpd_register_uri_handler(server, &uri_mqtt_publish);
+    httpd_register_uri_handler(server, &uri_ntfy);
+    httpd_register_uri_handler(server, &uri_ntfy_save);
+    httpd_register_uri_handler(server, &uri_ntfy_test);
     httpd_register_uri_handler(server, &uri_tools_route);
     httpd_register_uri_handler(server, &uri_tools_ping);
     httpd_register_uri_handler(server, &uri_tools_trace);

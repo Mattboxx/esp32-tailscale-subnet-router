@@ -19,6 +19,7 @@
 #include "tailscale_config.h"
 #include "nvs_params.h"
 #include "esp_sntp.h"
+#include "fourvia6.h"
 
 /* Local helper: load a string from NVS, defaulting to an empty heap
  * buffer when the key isn't there. Other modules assume non-NULL. */
@@ -156,6 +157,10 @@ esp_err_t tailscale_connect(void)
         s_microlink = NULL;
     }
 
+    char effective_routes[512];
+    fourvia6_effective_routes(tailscale_advertise_routes,
+                              effective_routes, sizeof effective_routes);
+
     microlink_config_t cfg = {
         .auth_key = tailscale_auth_key,
         .device_name = (tailscale_hostname && tailscale_hostname[0]) ? tailscale_hostname : NULL,
@@ -170,7 +175,7 @@ esp_err_t tailscale_connect(void)
         .stun_interval_ms = 0,
         .ctrl_watchdog_ms = 0,
         .ctrl_host = (tailscale_login_server && tailscale_login_server[0]) ? tailscale_login_server : NULL,
-        .advertise_routes = (tailscale_advertise_routes && tailscale_advertise_routes[0]) ? tailscale_advertise_routes : NULL,
+        .advertise_routes = effective_routes[0] ? effective_routes : NULL,
         .netcheck_override_enabled = (tailscale_netcheck_override != 0),
         .netcheck_override_threshold_ms = (uint32_t)tailscale_netcheck_threshold_ms,
         .preferred_derp_region = (uint16_t)tailscale_default_derp_region,

@@ -25,6 +25,7 @@
 #include "nvs_params.h"
 #include "tailscale_config.h"
 #include "wol.h"
+#include "fourvia6.h"
 
 static const char *TAG = "mqtt_bridge";
 static mqtt_integration_config_t s_config;
@@ -207,6 +208,15 @@ static void publish_discovery(void)
     discovery_publish_entity("sensor", "advertised_routes", "Advertised routes",
                              s_state_topic, "{{ value_json.advertised_routes }}",
                              NULL, NULL, NULL);
+    discovery_publish_entity("binary_sensor", "fourvia6", "4via6 routing",
+                             s_state_topic, "{{ value_json.fourvia6_enabled }}",
+                             NULL, "connectivity", NULL);
+    discovery_publish_entity("sensor", "fourvia6_prefix", "4via6 prefix",
+                             s_state_topic, "{{ value_json.fourvia6_prefix }}",
+                             NULL, NULL, NULL);
+    discovery_publish_entity("sensor", "fourvia6_flows", "4via6 active flows",
+                             s_state_topic, "{{ value_json.fourvia6_active_flows }}",
+                             NULL, NULL, NULL);
 
     snprintf(command, sizeof command, "%s/command/ap_always_on", cfg.base_topic);
     discovery_publish_entity("switch", "ap_always_on", "Access point always on",
@@ -228,6 +238,10 @@ static void publish_discovery(void)
     discovery_publish_entity("switch", "exit_node_lan_bypass",
                              "Exit node allow LAN access", s_state_topic,
                              "{{ value_json.exit_node_lan_bypass }}", command, NULL, NULL);
+    snprintf(command, sizeof command, "%s/command/fourvia6_enabled", cfg.base_topic);
+    discovery_publish_entity("switch", "fourvia6_enabled", "4via6 routing enabled",
+                             s_state_topic, "{{ value_json.fourvia6_enabled }}", command,
+                             NULL, NULL);
     snprintf(command, sizeof command, "%s/command/restart", cfg.base_topic);
     discovery_publish_entity("button", "restart", "Restart", NULL, NULL, command,
                              "restart", NULL);
@@ -318,6 +332,15 @@ static void publish_state(void)
                             tailscale_snat_subnet_routes ? "ON" : "OFF");
     cJSON_AddStringToObject(root, "exit_node_lan_bypass",
                             tailscale_lan_bypass ? "ON" : "OFF");
+    fourvia6_status_t v6;
+    fourvia6_get_status(&v6);
+    cJSON_AddStringToObject(root, "fourvia6_enabled", v6.enabled ? "ON" : "OFF");
+    cJSON_AddStringToObject(root, "fourvia6_lan_cidr", v6.lan_cidr);
+    cJSON_AddNumberToObject(root, "fourvia6_site_id", v6.site_id);
+    cJSON_AddStringToObject(root, "fourvia6_prefix", v6.advertised_prefix);
+    cJSON_AddNumberToObject(root, "fourvia6_active_flows", v6.active_flows);
+    cJSON_AddNumberToObject(root, "fourvia6_translated_packets", v6.translated_packets);
+    cJSON_AddNumberToObject(root, "fourvia6_dropped_packets", v6.dropped_packets);
     cJSON_AddStringToObject(root, "ap_enabled", wifi_ap_runtime_enabled() ? "ON" : "OFF");
     cJSON_AddStringToObject(root, "ap_always_on", wifi_ap_policy_auto_off() ? "OFF" : "ON");
     cJSON_AddNumberToObject(root, "ap_clients", client_count);
@@ -420,6 +443,16 @@ static void handle_command(const char *topic, const char *payload)
     } else if (strcmp(command, "exit_node_lan_bypass") == 0) {
         set_tailscale_flag("ts_lan_bp", &tailscale_lan_bypass,
                            payload_is_on(payload));
+    } else if (strcmp(command, "fourvia6_enabled") == 0) {
+        fourvia6_status_t v6;
+        fourvia6_get_status(&v6);
+        char error[96];
+        if (fourvia6_set_config(payload_is_on(payload), v6.lan_cidr,
+                                v6.site_id, error, sizeof error) == ESP_OK) {
+            publish_state();
+            /* Route advertisement is built when microlink starts. */
+            xTaskCreate(delayed_restart, "mqtt_4via6", 2048, NULL, 4, NULL);
+        }
     } else if (strcmp(command, "reconnect_wifi") == 0) {
         xTaskCreate(reconnect_wifi_task, "mqtt_wifi_reconnect", 2048, NULL, 4, NULL);
     } else if (strcmp(command, "reconnect_tailscale") == 0) {

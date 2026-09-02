@@ -15,6 +15,13 @@ connected board.
 - MQTT retained state, Last Will, commands and watchdog.
 - Home Assistant discovery for network/Tailscale/AP/system/MQTT diagnostics and
   AP, routes, SNAT, LAN bypass, Tailscale, reconnect, restart, publish and WOL.
+- Optional Tailscale 4via6 routing for overlapping IPv4 LANs: configurable
+  LAN CIDR and site ID, calculated/advertised prefix, bidirectional TCP/UDP/
+  ICMP translation, flow counters and Home Assistant status/control.
+- Optional ntfy alerts for a Tailscale outage while the uplink is working,
+  plus replay-protected `info` and saved/direct-MAC WOL commands.
+- Fixed the ntfy command-poll reboot loop: the HTTP response buffer is now
+  heap-backed instead of exhausting the ntfy task stack on its first poll.
 - Optional web password gate and session timeout. Passwords of at least four
   characters are accepted, with a visible warning for weak choices.
 - Manual local OTA upload and explicit privacy/outbound-traffic reporting.
@@ -46,6 +53,7 @@ The remaining functional traffic is limited to:
 - the selected Tailscale/Headscale control plane, DERP and STUN endpoints;
 - NTP (`pool.ntp.org`) for time required by authenticated/TLS connections;
 - the operator-configured MQTT broker, only when MQTT is enabled;
+- the operator-configured ntfy server, only when ntfy is enabled;
 - targets explicitly requested by ping, traceroute, WOL or routed clients.
 
 No hidden path that adds tailnet devices or uploads local logs was found in the

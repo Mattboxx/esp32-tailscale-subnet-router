@@ -1,18 +1,19 @@
-Firmware branch: codex/ap-wol-mqtt
+Firmware version: 0.1.19-Mattboxx
+Firmware branch: mattboxx
 Target: ESP32-S3 N16R8, flash mode DIO, 80 MHz, image size 4 MB
 Build framework: ESP-IDF 5.3.1 via PlatformIO
 esptool.exe: Espressif esptool v5.3.1 standalone Windows amd64
-Download ufficiale esptool:
+Official esptool download:
 https://github.com/espressif/esptool/releases/download/v5.3.1/esptool-v5.3.1-windows-amd64.zip
-Codice sorgente corrispondente (GPL-2.0-or-later):
+Corresponding source code (GPL-2.0-or-later):
 https://github.com/espressif/esptool/tree/v5.3.1
-SHA256 archivio ufficiale:
+Official archive SHA256:
 2b4a73c45db27426685896f64ce3e557f63a64f43cc100cb65c0cc3486af96d3
 
-SHA256 file inclusi:
-bootloader.bin         73b350d0983b5064222a464feb94951a8a4459dd8f6cebb5b26ec0efe2efd9b0
-firmware-factory.bin   e0356fb60989614e9f541fd365ae656d2a1d778d500f321c7edb647c8eb16b14
-firmware.bin           6e7436e59b9be8847c39b8ee0fe03642059f1c5189908dc98ff2b96201bf9535
+Included file SHA256 values:
+bootloader.bin         fdee2dfb1562c66e3673990157e392d7af7d99bb9cae477dd63647bdb6a7cbcb
+firmware-factory.bin   28ff02d40350a02175bc00cbc8537188810010b0e6ac38fcc91dd8af51f0adce
+firmware.bin           9de47a77bae07c31c563f2fe02b6bd46925246d443928ff798b40f4b3e6b883b
 ota_data_initial.bin   7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f
 partitions.bin         0e4ae97e72746c559529154007a256e26158230263cb43cfca415525ef9c9489
 esptool.exe            a939e28fe2fbb53e65e46f0246a4d71b9fd6c052ef0e046182df4a4fe8bec946
