@@ -107,9 +107,11 @@ static void ip4_to_str(uint32_t ip_nbo, char *out, size_t out_size)
 
 /* Forward decls — definitions live further down. */
 static bool  request_authenticated(httpd_req_t *req);
+static int   session_find_for_req(httpd_req_t *req);
 static void  ip4_hbo_to_str(uint32_t hbo, char *out, size_t out_size);
 static char *device_name_dup(void);
 static int   subnet_mask_prefix_len(uint32_t mask_nbo);
+static bool  s_web_auth_enabled;
 
 static esp_err_t require_auth(httpd_req_t *req)
 {
@@ -1674,6 +1676,18 @@ static esp_err_t wol_handler(httpd_req_t *req)
     return err;
 }
 
+/* Secret export/import is deliberately stricter than the rest of the UI.
+ * When the operator disables the web password, ordinary configuration is
+ * public by choice, but saved WiFi/EAP/MQTT credentials and the Tailscale
+ * auth key must never become anonymously downloadable. */
+static esp_err_t require_password_session(httpd_req_t *req)
+{
+    if (is_web_password_set() && session_find_for_req(req) >= 0) return ESP_OK;
+    httpd_resp_send_err(req, HTTPD_403_FORBIDDEN,
+                        "enable web authentication and sign in to access secrets");
+    return ESP_FAIL;
+}
+
 /* POST /api/wol — atomically replace the address book. */
 static esp_err_t wol_save_handler(httpd_req_t *req)
 {
@@ -3061,7 +3075,7 @@ static void delayed_restart_task(void *arg);
  * read once at microlink_init. */
 static esp_err_t tailscale_reset_identity_handler(httpd_req_t *req)
 {
-    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    if (require_password_session(req) != ESP_OK) return ESP_FAIL;
     esp_err_t err = microlink_factory_reset();
     httpd_resp_set_type(req, "application/json");
     if (err != ESP_OK) {
@@ -3099,6 +3113,7 @@ static uint32_t session_timeout_clamp(uint32_t v);
 static uint32_t session_remaining_s_for_req(httpd_req_t *req);
 static bool     session_alive(void);
 static void     session_extend_all_alive(void);
+static void     session_clear_all(void);
 
 static esp_err_t system_handler(httpd_req_t *req)
 {
@@ -3137,6 +3152,8 @@ static esp_err_t system_handler(httpd_req_t *req)
      * next to the lock button without needing its own /api/auth poll. */
     cJSON_AddNumberToObject(root, "session_timeout_s",   s_session_timeout_s);
     cJSON_AddNumberToObject(root, "session_remaining_s", session_remaining_s_for_req(req));
+    cJSON_AddBoolToObject(root, "web_auth_enabled", s_web_auth_enabled);
+    cJSON_AddBoolToObject(root, "web_password_set", is_web_password_set());
 
     /* TX-power override (0 = IDF default ≈ 20 dBm, 8..84 = custom in
      * 0.25 dBm steps). Reading via the live API gives whatever was
@@ -3253,9 +3270,9 @@ static esp_err_t system_save_handler(httpd_req_t *req)
         tzset();
     }
 
-    /* Web-session idle timeout (seconds). Persisted under NVS "auth_to_s"
-     * and clamped server-side to [60, 28800] so a misbehaving client
-     * can't lock everyone out with 0 or set a year-long window. The
+    /* Web-session idle timeout (seconds). Persisted under NVS "auth_to_s".
+     * Zero explicitly disables expiry; non-zero values are clamped to
+     * [60, 28800]. The
      * sliding-window logic in request_authenticated() uses the new value
      * on the very next authenticated hit — no reboot needed. */
     const cJSON *st = cJSON_GetObjectItem(root, "session_timeout_s");
@@ -3265,6 +3282,16 @@ static esp_err_t system_save_handler(httpd_req_t *req)
         nvs_save_u32("auth_to_s", v);
         s_session_timeout_s = v;
         session_extend_all_alive();
+    }
+
+    /* Web password gate. This switch does not delete the stored password:
+     * the same credential keeps protecting the optional remote console and
+     * is ready if the operator enables the web gate again. */
+    const cJSON *wa = cJSON_GetObjectItem(root, "web_auth_enabled");
+    if (cJSON_IsBool(wa)) {
+        bool enabled = cJSON_IsTrue(wa);
+        nvs_save_u8("web_auth_en", enabled ? 1 : 0);
+        s_web_auth_enabled = enabled;
     }
 
     /* TX-power override — clamp + persist + apply live. 0 disables the
@@ -3305,7 +3332,7 @@ static esp_err_t system_restart_handler(httpd_req_t *req)
 
 static esp_err_t system_factory_reset_handler(httpd_req_t *req)
 {
-    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    if (require_password_session(req) != ESP_OK) return ESP_FAIL;
     nvs_param_erase_all();
     httpd_resp_set_type(req, "application/json");
     esp_err_t err = httpd_resp_sendstr(req, "{\"ok\":true,\"restarting\":true}");
@@ -3327,7 +3354,7 @@ static void delayed_abort_task(void *arg)
 }
 static esp_err_t system_debug_crash_handler(httpd_req_t *req)
 {
-    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    if (require_password_session(req) != ESP_OK) return ESP_FAIL;
     httpd_resp_set_type(req, "application/json");
     esp_err_t err = httpd_resp_sendstr(req, "{\"ok\":true,\"aborting\":true}");
     xTaskCreate(delayed_abort_task, "crash", 2048, NULL, 5, NULL);
@@ -3352,7 +3379,7 @@ static const httpd_uri_t uri_system_factory_reset = {
  * actual ota_upload_handler can stay agnostic. */
 static esp_err_t system_ota_upload_handler(httpd_req_t *req)
 {
-    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    if (require_password_session(req) != ESP_OK) return ESP_FAIL;
     esp_err_t err = ota_upload_handler(req);
     if (err == ESP_OK) {
         /* Schedule a delayed reboot — same pattern as /api/system/restart
@@ -3373,7 +3400,7 @@ static const httpd_uri_t uri_system_ota = {
  * through the same nvs_save_* helpers as every other config handler. */
 static esp_err_t system_secrets_get_handler(httpd_req_t *req)
 {
-    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    if (require_password_session(req) != ESP_OK) return ESP_FAIL;
 
     cJSON *root = cJSON_CreateObject();
     if (!root) { httpd_resp_send_500(req); return ESP_FAIL; }
@@ -3434,7 +3461,7 @@ static const httpd_uri_t uri_system_secrets_get = {
 
 static esp_err_t system_secrets_post_handler(httpd_req_t *req)
 {
-    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    if (require_password_session(req) != ESP_OK) return ESP_FAIL;
     nvs_save_errors_reset();
 
     /* Worst-case bundle: 5 networks × ~400 B of EAP/static fields + a few
@@ -3795,6 +3822,7 @@ typedef struct {
 
 static web_session_t s_sessions[WEB_UI_SESSION_MAX] = {0};
 static uint32_t      s_session_timeout_s = WEB_UI_SESSION_TIMEOUT_DEF_S;
+static bool          s_web_auth_enabled = true;
 
 static void hex_encode(const uint8_t *src, size_t len, char *out)
 {
@@ -3804,6 +3832,7 @@ static void hex_encode(const uint8_t *src, size_t len, char *out)
 
 static uint32_t session_timeout_clamp(uint32_t v)
 {
+    if (v == 0) return 0;  /* explicitly disabled */
     if (v < WEB_UI_SESSION_TIMEOUT_MIN_S) return WEB_UI_SESSION_TIMEOUT_MIN_S;
     if (v > WEB_UI_SESSION_TIMEOUT_MAX_S) return WEB_UI_SESSION_TIMEOUT_MAX_S;
     return v;
@@ -3812,10 +3841,20 @@ static uint32_t session_timeout_clamp(uint32_t v)
 static void session_timeout_load(void)
 {
     uint32_t v = 0;
-    if (nvs_param_get_u32("auth_to_s", &v) == ESP_OK && v) {
+    if (nvs_param_get_u32("auth_to_s", &v) == ESP_OK) {
         s_session_timeout_s = session_timeout_clamp(v);
     } else {
         s_session_timeout_s = WEB_UI_SESSION_TIMEOUT_DEF_S;
+    }
+}
+
+static void web_auth_setting_load(void)
+{
+    uint8_t enabled = 1;
+    if (nvs_param_get_u8("web_auth_en", &enabled) == ESP_OK) {
+        s_web_auth_enabled = enabled != 0;
+    } else {
+        s_web_auth_enabled = true;
     }
 }
 
@@ -3888,8 +3927,10 @@ static const char *session_create(void)
     uint8_t raw[WEB_UI_SESSION_TOKEN_LEN];
     esp_fill_random(raw, sizeof raw);
     hex_encode(raw, sizeof raw, s_sessions[idx].token);
-    s_sessions[idx].expires_us = (uint64_t)esp_timer_get_time()
-                                + (uint64_t)s_session_timeout_s * 1000000ULL;
+    s_sessions[idx].expires_us = s_session_timeout_s == 0
+                               ? UINT64_MAX
+                               : (uint64_t)esp_timer_get_time()
+                                 + (uint64_t)s_session_timeout_s * 1000000ULL;
     return s_sessions[idx].token;
 }
 
@@ -3907,7 +3948,9 @@ static void session_clear_slot(int idx)
 static void session_extend_all_alive(void)
 {
     uint64_t now = (uint64_t)esp_timer_get_time();
-    uint64_t new_exp = now + (uint64_t)s_session_timeout_s * 1000000ULL;
+    uint64_t new_exp = s_session_timeout_s == 0
+                     ? UINT64_MAX
+                     : now + (uint64_t)s_session_timeout_s * 1000000ULL;
     for (int i = 0; i < WEB_UI_SESSION_MAX; i++) {
         if (s_sessions[i].token[0] && now < s_sessions[i].expires_us) {
             s_sessions[i].expires_us = new_exp;
@@ -3920,6 +3963,7 @@ static uint32_t session_remaining_s_for_req(httpd_req_t *req)
 {
     int idx = session_find_for_req(req);
     if (idx < 0) return 0;
+    if (s_session_timeout_s == 0) return 0;
     uint64_t now = (uint64_t)esp_timer_get_time();
     if (now >= s_sessions[idx].expires_us) return 0;
     return (uint32_t)((s_sessions[idx].expires_us - now) / 1000000ULL);
@@ -3927,15 +3971,17 @@ static uint32_t session_remaining_s_for_req(httpd_req_t *req)
 
 static bool request_authenticated(httpd_req_t *req)
 {
-    /* No password set → entire UI is open. Mirrors the OLD repo's
-     * behaviour and lets first-boot show the password wizard. */
-    if (!is_web_password_set()) return true;
+    /* The operator may intentionally expose ordinary configuration without
+     * a password. Secret export/import remains independently protected. */
+    if (!s_web_auth_enabled || !is_web_password_set()) return true;
     int idx = session_find_for_req(req);
     if (idx < 0) return false;
     /* Sliding window: every authenticated hit pushes the matching slot's
      * expiry out, so a tab the operator is actively poking never times out. */
-    s_sessions[idx].expires_us = (uint64_t)esp_timer_get_time()
-                                + (uint64_t)s_session_timeout_s * 1000000ULL;
+    s_sessions[idx].expires_us = s_session_timeout_s == 0
+                               ? UINT64_MAX
+                               : (uint64_t)esp_timer_get_time()
+                                 + (uint64_t)s_session_timeout_s * 1000000ULL;
     return true;
 }
 
@@ -3952,7 +3998,10 @@ static char *device_name_dup(void)
 static esp_err_t auth_status_handler(httpd_req_t *req)
 {
     cJSON *root = cJSON_CreateObject();
-    cJSON_AddBoolToObject(root, "auth_required", is_web_password_set());
+    cJSON_AddBoolToObject(root, "auth_enabled", s_web_auth_enabled);
+    cJSON_AddBoolToObject(root, "password_set", is_web_password_set());
+    cJSON_AddBoolToObject(root, "auth_required",
+                          s_web_auth_enabled && is_web_password_set());
     cJSON_AddBoolToObject(root, "authenticated", request_authenticated(req));
     /* Device name is fine to expose pre-auth — it's a label, not a secret. */
     char *name = device_name_dup();
@@ -4004,9 +4053,14 @@ static esp_err_t auth_login_handler(httpd_req_t *req)
 
     const char *new_token = session_create();
     char cookie[160];
-    snprintf(cookie, sizeof cookie,
-             "ts_session=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%u",
-             new_token, (unsigned)s_session_timeout_s);
+    if (s_session_timeout_s == 0) {
+        snprintf(cookie, sizeof cookie,
+                 "ts_session=%s; Path=/; HttpOnly; SameSite=Strict", new_token);
+    } else {
+        snprintf(cookie, sizeof cookie,
+                 "ts_session=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%u",
+                 new_token, (unsigned)s_session_timeout_s);
+    }
     httpd_resp_set_hdr(req, "Set-Cookie", cookie);
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, "{\"ok\":true}");
@@ -4032,7 +4086,7 @@ static const httpd_uri_t uri_auth_logout = {
     .uri = "/api/auth/logout", .method = HTTP_POST, .handler = auth_logout_handler,
 };
 
-#define WEB_UI_PASSWORD_MIN_LEN 8
+#define WEB_UI_PASSWORD_MIN_LEN 4
 
 /* Returns NULL if the password meets the admin-policy requirements,
  * otherwise a static, human-readable error string. The same wording
@@ -4042,20 +4096,8 @@ static const char *check_password_policy(const char *pw)
     if (!pw) return "missing password";
     size_t len = strlen(pw);
     if (len < WEB_UI_PASSWORD_MIN_LEN) {
-        return "password must be at least 8 characters";
+        return "password must be at least 4 characters";
     }
-    bool lower = false, upper = false, digit = false, special = false;
-    for (size_t i = 0; i < len; i++) {
-        unsigned char c = (unsigned char)pw[i];
-        if (c >= 'a' && c <= 'z')      lower = true;
-        else if (c >= 'A' && c <= 'Z') upper = true;
-        else if (c >= '0' && c <= '9') digit = true;
-        else if (c >= 33 && c <= 126)  special = true;   /* printable non-alnum */
-    }
-    if (!lower)   return "password must include a lowercase letter";
-    if (!upper)   return "password must include an uppercase letter";
-    if (!digit)   return "password must include a digit";
-    if (!special) return "password must include a special character";
     return NULL;
 }
 
@@ -4098,9 +4140,14 @@ static esp_err_t auth_setup_handler(httpd_req_t *req)
      * from the wizard into the normal dashboard without a second POST. */
     const char *setup_token = session_create();
     char cookie[160];
-    snprintf(cookie, sizeof cookie,
-             "ts_session=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%u",
-             setup_token, (unsigned)s_session_timeout_s);
+    if (s_session_timeout_s == 0) {
+        snprintf(cookie, sizeof cookie,
+                 "ts_session=%s; Path=/; HttpOnly; SameSite=Strict", setup_token);
+    } else {
+        snprintf(cookie, sizeof cookie,
+                 "ts_session=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%u",
+                 setup_token, (unsigned)s_session_timeout_s);
+    }
     httpd_resp_set_hdr(req, "Set-Cookie", cookie);
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, "{\"ok\":true}");
@@ -4162,9 +4209,10 @@ static const httpd_uri_t uri_auth_change_password = {
 
 static esp_err_t auth_clear_password_handler(httpd_req_t *req)
 {
-    /* Auth is required: only an already-logged-in operator can do this.
-     * Once cleared the device reverts to first-boot wizard mode. */
-    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    /* Always require a real password-backed session, even when the ordinary
+     * web gate is disabled, otherwise any LAN client could erase the
+     * credential that protects secret backups and the remote console. */
+    if (require_password_session(req) != ESP_OK) return ESP_FAIL;
     set_web_password_hashed("");
     session_clear_all();
     httpd_resp_set_hdr(req, "Set-Cookie", "ts_session=; Path=/; HttpOnly; Max-Age=0");
@@ -4422,6 +4470,7 @@ void web_ui_init(void)
      * start handing out cookies, so the very first login uses the
      * persisted Max-Age instead of the compile-time default. */
     session_timeout_load();
+    web_auth_setting_load();
 
     /* HTTPS→HTTP swap (2026-05-24): the self-signed esp_https_server
      * + mbedTLS combo cost ~20 KB heap per active TLS session and was

@@ -119,7 +119,7 @@ traffic you route through it.)*
   Source-NAT (à la Tailscale `--snat-subnet-routes`) lets tailnet peers reach
   the network the device is *connected to*, with no static route needed on the
   upstream router.
-- **Web UI for everything** — first-run password setup, WiFi join,
+- **Web UI for everything** — optional password gate and session timeout, WiFi join,
   tailnet enrolment, routes, firewall, diagnostics. Dark, responsive,
   single-page; served straight off the device.
 - **Tailscale, the real protocol** — DISCO peer discovery, direct paths
@@ -145,8 +145,9 @@ traffic you route through it.)*
 - **Wake-on-LAN address book** — save up to 12 devices and send their UDP
   magic packets from the web UI, MQTT, or Home Assistant.
 - **MQTT + Home Assistant** — retained health/network/Tailscale state,
-  inbound AP/restart/WOL commands, Last Will availability, and automatic
-  Home Assistant discovery (including one Wake button per saved device).
+  inbound AP/routing/Tailscale/reconnect/restart/WOL commands, Last Will
+  availability, and automatic Home Assistant discovery (including one Wake
+  button per saved device).
 - **Robust by design** — encrypted config backup/restore, local-only manual
   OTA upload, per-sink (console + SD) log levels, auto AP-channel realign on
   STA roam, and pre-crash log capture.
@@ -324,7 +325,7 @@ subnet, and those devices can use the tailnet (and any exit node you picked).
 
 ## Web UI tour
 
-The single-page UI has six sections:
+The single-page UI has seven sections:
 
 | Section | What's there |
 |---|---|
@@ -333,7 +334,8 @@ The single-page UI has six sections:
 | **Tailscale** | Auth key, hostname, advertised routes, exit node, MTU, peer table |
 | **Firewall** | The four ACL chains, rule editor, hit counters |
 | **Diagnostics** | Route-explain, ping, traceroute, WiFi scan, live + SD logs |
-| **System** | Device name, manual firmware upload, SD-card logging, backup, danger zone, privacy status |
+| **Automation** | Wake-on-LAN address book, MQTT status/commands, broker watchdog, Home Assistant discovery |
+| **System** | Device name, web password gate + idle timeout, manual firmware upload, SD-card logging, backup, danger zone, privacy status |
 
 ### Firewall / ACL
 

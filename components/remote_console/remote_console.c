@@ -587,11 +587,15 @@ static int recv_line(int fd, char *buf, size_t max_len, uint32_t timeout_sec) {
 static bool authenticate_client(int client_fd) {
     char password_input[64];
 
-    /* If no password set, skip authentication */
+    /* Fail closed. The web UI may intentionally run without its password
+     * gate, but a TCP shell must never become anonymous as a side effect.
+     * The stored admin password is shared with this console even while the
+     * web gate is disabled. */
     if (!is_web_password_set()) {
-        ESP_LOGW(TAG, "No password set - allowing unauthenticated access");
-        send_string(client_fd, "WARNING: No password set. Use 'set_router_password' to secure access.\r\n");
-        return true;
+        ESP_LOGE(TAG, "Remote console refused: no admin password is configured");
+        send_string(client_fd,
+                    "Remote console locked: configure an admin password in the web UI.\r\n");
+        return false;
     }
 
     for (int attempt = 0; attempt < RC_MAX_AUTH_ATTEMPTS; attempt++) {

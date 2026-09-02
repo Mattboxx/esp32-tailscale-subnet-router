@@ -7,6 +7,7 @@
 #include <string.h>
 #include "cJSON.h"
 #include "esp_crt_bundle.h"
+#include "esp_app_desc.h"
 #include "esp_event.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -20,6 +21,7 @@
 #include "freertos/task.h"
 #include "lwip/ip4_addr.h"
 #include "mqtt_client.h"
+#include "microlink.h"
 #include "nvs_params.h"
 #include "tailscale_config.h"
 #include "wol.h"
@@ -35,6 +37,7 @@ static volatile bool s_discovery_requested;
 static volatile bool s_watchdog_triggered;
 static volatile uint32_t s_watchdog_wake_count;
 static volatile int64_t s_last_broker_ok_us;
+static volatile bool s_tailscale_reconnect_pending;
 static char s_device_id[24];
 static char s_availability_topic[128];
 static char s_state_topic[128];
@@ -162,6 +165,8 @@ static void publish_discovery(void)
                              "{{ value_json.uplink_ip }}", NULL, NULL, NULL);
     discovery_publish_entity("sensor", "wifi_rssi", "WiFi signal", s_state_topic,
                              "{{ value_json.rssi }}", NULL, "signal_strength", "dBm");
+    discovery_publish_entity("sensor", "wifi_ssid", "WiFi SSID", s_state_topic,
+                             "{{ value_json.ssid }}", NULL, NULL, NULL);
     discovery_publish_entity("binary_sensor", "tailscale", "Tailscale", s_state_topic,
                              "{{ value_json.tailscale_connected }}", NULL,
                              "connectivity", NULL);
@@ -169,8 +174,15 @@ static void publish_discovery(void)
                              "{{ value_json.tailscale_ip }}", NULL, NULL, NULL);
     discovery_publish_entity("sensor", "free_heap", "Free heap", s_state_topic,
                              "{{ value_json.free_heap }}", NULL, NULL, "B");
+    discovery_publish_entity("sensor", "minimum_free_heap", "Minimum free heap",
+                             s_state_topic, "{{ value_json.minimum_free_heap }}",
+                             NULL, NULL, "B");
     discovery_publish_entity("sensor", "uptime", "Uptime", s_state_topic,
                              "{{ value_json.uptime_seconds }}", NULL, "duration", "s");
+    discovery_publish_entity("sensor", "firmware", "Firmware", s_state_topic,
+                             "{{ value_json.firmware }}", NULL, NULL, NULL);
+    discovery_publish_entity("sensor", "reset_reason", "Reset reason code", s_state_topic,
+                             "{{ value_json.reset_reason }}", NULL, NULL, NULL);
     discovery_publish_entity("binary_sensor", "access_point", "Access point", s_state_topic,
                              "{{ value_json.ap_enabled }}", NULL, "connectivity", NULL);
     discovery_publish_entity("sensor", "ap_clients", "AP clients", s_state_topic,
@@ -178,14 +190,56 @@ static void publish_discovery(void)
     discovery_publish_entity("sensor", "mqtt_watchdog_wakes", "MQTT watchdog wakes",
                              s_state_topic, "{{ value_json.mqtt_watchdog_wake_count }}",
                              NULL, NULL, NULL);
+    discovery_publish_entity("binary_sensor", "mqtt_watchdog_triggered",
+                             "MQTT watchdog triggered", s_state_topic,
+                             "{{ value_json.mqtt_watchdog_triggered }}", NULL,
+                             "problem", NULL);
+    discovery_publish_entity("sensor", "broker_silence", "MQTT broker silence",
+                             s_state_topic, "{{ value_json.broker_silence_seconds }}",
+                             NULL, "duration", "s");
+    discovery_publish_entity("sensor", "tailscale_peers", "Tailscale peers",
+                             s_state_topic, "{{ value_json.tailscale_peer_count }}",
+                             NULL, NULL, NULL);
+    discovery_publish_entity("sensor", "tailscale_peers_online",
+                             "Tailscale peers online", s_state_topic,
+                             "{{ value_json.tailscale_online_peer_count }}",
+                             NULL, NULL, NULL);
+    discovery_publish_entity("sensor", "advertised_routes", "Advertised routes",
+                             s_state_topic, "{{ value_json.advertised_routes }}",
+                             NULL, NULL, NULL);
 
     snprintf(command, sizeof command, "%s/command/ap_always_on", cfg.base_topic);
     discovery_publish_entity("switch", "ap_always_on", "Access point always on",
                              s_state_topic, "{{ value_json.ap_always_on }}", command,
                              NULL, NULL);
+    snprintf(command, sizeof command, "%s/command/tailscale_enabled", cfg.base_topic);
+    discovery_publish_entity("switch", "tailscale_enabled", "Tailscale enabled",
+                             s_state_topic, "{{ value_json.tailscale_enabled }}", command,
+                             NULL, NULL);
+    snprintf(command, sizeof command, "%s/command/accept_routes", cfg.base_topic);
+    discovery_publish_entity("switch", "accept_routes", "Accept peer subnet routes",
+                             s_state_topic, "{{ value_json.accept_routes }}", command,
+                             NULL, NULL);
+    snprintf(command, sizeof command, "%s/command/snat_subnet_routes", cfg.base_topic);
+    discovery_publish_entity("switch", "snat_subnet_routes",
+                             "Source-NAT advertised routes", s_state_topic,
+                             "{{ value_json.snat_subnet_routes }}", command, NULL, NULL);
+    snprintf(command, sizeof command, "%s/command/exit_node_lan_bypass", cfg.base_topic);
+    discovery_publish_entity("switch", "exit_node_lan_bypass",
+                             "Exit node allow LAN access", s_state_topic,
+                             "{{ value_json.exit_node_lan_bypass }}", command, NULL, NULL);
     snprintf(command, sizeof command, "%s/command/restart", cfg.base_topic);
     discovery_publish_entity("button", "restart", "Restart", NULL, NULL, command,
                              "restart", NULL);
+    snprintf(command, sizeof command, "%s/command/reconnect_wifi", cfg.base_topic);
+    discovery_publish_entity("button", "reconnect_wifi", "Reconnect WiFi",
+                             NULL, NULL, command, "restart", NULL);
+    snprintf(command, sizeof command, "%s/command/reconnect_tailscale", cfg.base_topic);
+    discovery_publish_entity("button", "reconnect_tailscale", "Reconnect Tailscale",
+                             NULL, NULL, command, "restart", NULL);
+    snprintf(command, sizeof command, "%s/command/status", cfg.base_topic);
+    discovery_publish_entity("button", "publish_status", "Publish status now",
+                             NULL, NULL, command, NULL, NULL);
 
     int count = wol_count();
     for (int i = 0; i < count; i++) {
@@ -231,6 +285,17 @@ static void publish_state(void)
         ip4_addr_t address = { .addr = tailscale_tunnel_ip };
         snprintf(ts_ip, sizeof ts_ip, IPSTR, IP2STR(&address));
     }
+    int peer_count = 0;
+    int online_peer_count = 0;
+    microlink_t *ml = tailscale_get_microlink();
+    if (ml) {
+        peer_count = microlink_get_peer_count(ml);
+        for (int i = 0; i < peer_count; i++) {
+            microlink_peer_info_t peer = {0};
+            if (microlink_get_peer_info(ml, i, &peer) == ESP_OK && peer.online)
+                online_peer_count++;
+        }
+    }
     wifi_sta_list_t clients = {0};
     int client_count = 0;
     if (wifi_ap_runtime_enabled() && esp_wifi_ap_get_sta_list(&clients) == ESP_OK)
@@ -241,12 +306,27 @@ static void publish_state(void)
     cJSON_AddStringToObject(root, "ssid", ssid);
     cJSON_AddNumberToObject(root, "rssi", rssi);
     cJSON_AddStringToObject(root, "tailscale_connected", ts_connected ? "ON" : "OFF");
+    cJSON_AddStringToObject(root, "tailscale_enabled", tailscale_enabled ? "ON" : "OFF");
     cJSON_AddStringToObject(root, "tailscale_ip", ts_ip);
+    cJSON_AddNumberToObject(root, "tailscale_peer_count", peer_count);
+    cJSON_AddNumberToObject(root, "tailscale_online_peer_count", online_peer_count);
+    cJSON_AddStringToObject(root, "advertised_routes",
+                            tailscale_advertise_routes ? tailscale_advertise_routes : "");
+    cJSON_AddStringToObject(root, "accept_routes",
+                            tailscale_accept_routes ? "ON" : "OFF");
+    cJSON_AddStringToObject(root, "snat_subnet_routes",
+                            tailscale_snat_subnet_routes ? "ON" : "OFF");
+    cJSON_AddStringToObject(root, "exit_node_lan_bypass",
+                            tailscale_lan_bypass ? "ON" : "OFF");
     cJSON_AddStringToObject(root, "ap_enabled", wifi_ap_runtime_enabled() ? "ON" : "OFF");
     cJSON_AddStringToObject(root, "ap_always_on", wifi_ap_policy_auto_off() ? "OFF" : "ON");
     cJSON_AddNumberToObject(root, "ap_clients", client_count);
     cJSON_AddNumberToObject(root, "uptime_seconds", esp_timer_get_time() / 1000000ULL);
     cJSON_AddNumberToObject(root, "free_heap", esp_get_free_heap_size());
+    cJSON_AddNumberToObject(root, "minimum_free_heap", esp_get_minimum_free_heap_size());
+    const esp_app_desc_t *app = esp_app_get_description();
+    cJSON_AddStringToObject(root, "firmware", app ? app->version : "");
+    cJSON_AddNumberToObject(root, "reset_reason", esp_reset_reason());
     cJSON_AddStringToObject(root, "mqtt_watchdog_triggered",
                             s_watchdog_triggered ? "ON" : "OFF");
     cJSON_AddNumberToObject(root, "mqtt_watchdog_wake_count", s_watchdog_wake_count);
@@ -266,6 +346,35 @@ static void delayed_restart(void *arg)
     (void)arg;
     vTaskDelay(pdMS_TO_TICKS(750));
     esp_restart();
+}
+
+static void reconnect_wifi_task(void *arg)
+{
+    (void)arg;
+    (void)esp_wifi_disconnect();
+    vTaskDelay(pdMS_TO_TICKS(750));
+    (void)esp_wifi_connect();
+    vTaskDelete(NULL);
+}
+
+static void reconnect_tailscale_task(void *arg)
+{
+    (void)arg;
+    tailscale_disconnect();
+    vTaskDelay(pdMS_TO_TICKS(500));
+    if (tailscale_enabled) (void)tailscale_connect();
+    s_tailscale_reconnect_pending = false;
+    s_publish_requested = true;
+    vTaskDelete(NULL);
+}
+
+static void set_tailscale_flag(const char *nvs_key, int32_t *runtime,
+                               bool enabled)
+{
+    if (nvs_param_set_int(nvs_key, enabled ? 1 : 0) == ESP_OK) {
+        *runtime = enabled ? 1 : 0;
+        publish_state();
+    }
 }
 
 static bool payload_is_on(const char *payload)
@@ -292,6 +401,34 @@ static void handle_command(const char *topic, const char *payload)
         if (nvs_param_set_u8("ap_auto_off", always_on ? 0 : 1) == ESP_OK) {
             wifi_ap_policy_set_auto_off(!always_on);
             publish_state();
+        }
+    } else if (strcmp(command, "tailscale_enabled") == 0) {
+        bool enabled = payload_is_on(payload);
+        if (nvs_param_set_int("ts_enabled", enabled ? 1 : 0) == ESP_OK) {
+            tailscale_enabled = enabled ? 1 : 0;
+            publish_state();
+            /* The normal lifecycle is boot-driven; restart keeps teardown and
+             * route-hook state transitions identical to a web-UI change. */
+            xTaskCreate(delayed_restart, "mqtt_ts_toggle", 2048, NULL, 4, NULL);
+        }
+    } else if (strcmp(command, "accept_routes") == 0) {
+        set_tailscale_flag("ts_acpt_rt", &tailscale_accept_routes,
+                           payload_is_on(payload));
+    } else if (strcmp(command, "snat_subnet_routes") == 0) {
+        set_tailscale_flag("ts_snat_sr", &tailscale_snat_subnet_routes,
+                           payload_is_on(payload));
+    } else if (strcmp(command, "exit_node_lan_bypass") == 0) {
+        set_tailscale_flag("ts_lan_bp", &tailscale_lan_bypass,
+                           payload_is_on(payload));
+    } else if (strcmp(command, "reconnect_wifi") == 0) {
+        xTaskCreate(reconnect_wifi_task, "mqtt_wifi_reconnect", 2048, NULL, 4, NULL);
+    } else if (strcmp(command, "reconnect_tailscale") == 0) {
+        if (!s_tailscale_reconnect_pending) {
+            s_tailscale_reconnect_pending = true;
+            if (xTaskCreate(reconnect_tailscale_task, "mqtt_ts_reconnect",
+                            4096, NULL, 4, NULL) != pdPASS) {
+                s_tailscale_reconnect_pending = false;
+            }
         }
     } else if (strncmp(command, "wol/", 4) == 0) {
         const char *compact = command + 4;

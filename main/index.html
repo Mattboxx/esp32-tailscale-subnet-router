@@ -1419,6 +1419,12 @@
         </svg>
         Diagnostics
       </a>
+      <a class="nav-tab" role="tab" data-page="automation" aria-selected="false" href="#automation">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M13 2L3 14h8l-1 8 10-12h-8z"/>
+        </svg>
+        Automation
+      </a>
       <a class="nav-tab" role="tab" data-page="system" aria-selected="false" href="#system">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="3"/>
@@ -1468,8 +1474,8 @@
       <input type="text" name="username" autocomplete="username" value="admin" hidden>
       <div class="form-group">
         <label class="form-label" for="setup-pw">Password</label>
-        <input class="input" type="password" id="setup-pw" name="new-password" autocomplete="new-password" placeholder="Enter password" minlength="8">
-        <span class="auth-hint">Min 8 chars, with a lowercase, uppercase, digit, and special character.</span>
+        <input class="input" type="password" id="setup-pw" name="new-password" autocomplete="new-password" placeholder="Enter password" minlength="4">
+        <span class="auth-hint">Minimum 4 characters. Simple passwords are accepted, but are easier to guess on an exposed network.</span>
       </div>
       <div class="form-group" style="margin-bottom:var(--sp-6)">
         <label class="form-label" for="setup-pw2">Confirm password</label>
@@ -1944,33 +1950,6 @@
           <div class="form-footer-actions">
             <button class="btn btn-secondary btn-md" id="net-ap-reload">Reload</button>
             <button class="btn btn-primary btn-md" id="net-ap-save" disabled>Save</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- ===== Wake-on-LAN ===== -->
-      <div class="card mt-4">
-        <div class="card-header">
-          <div class="card-header-left">
-            <span class="card-title">Wake-on-LAN</span>
-          </div>
-          <span class="badge badge-neutral" id="wol-badge">—</span>
-        </div>
-        <div class="card-body">
-          <p class="form-hint" style="margin:0 0 0.75rem 0;">
-            Save computers and appliances that support Wake-on-LAN, then send a magic packet from this ESP32.
-            Leave broadcast empty to derive it from the current uplink (for example <code class="mono">192.168.1.255</code>).
-          </p>
-          <div id="wol-list"></div>
-          <div style="margin-top:0.75rem;">
-            <button class="btn btn-secondary btn-md" id="wol-add-btn" type="button">+ Add device</button>
-          </div>
-        </div>
-        <div class="form-footer">
-          <span class="form-footer-hint">Magic packets use UDP port 9 by default. Saved devices are also exposed as Home Assistant buttons when MQTT discovery is enabled.</span>
-          <div class="form-footer-actions">
-            <button class="btn btn-secondary btn-md" id="wol-reload">Reload</button>
-            <button class="btn btn-primary btn-md" id="wol-save" disabled>Save</button>
           </div>
         </div>
       </div>
@@ -2503,6 +2482,102 @@
     </div>
 
     <!-- =================================================================
+         AUTOMATION PAGE
+         =============================================================== -->
+    <div class="page-section" id="page-automation">
+      <div class="page-header">
+        <div class="page-header-left">
+          <h1 class="page-title">Automation</h1>
+          <p class="page-subtitle">Wake-on-LAN, MQTT monitoring and Home Assistant controls</p>
+        </div>
+        <div class="page-header-actions">
+          <button class="btn btn-secondary btn-md" id="automation-reload">Refresh</button>
+        </div>
+      </div>
+
+      <!-- ===== Wake-on-LAN ===== -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">Wake-on-LAN</span>
+          </div>
+          <span class="badge badge-neutral" id="wol-badge">—</span>
+        </div>
+        <div class="card-body">
+          <p class="form-hint" style="margin:0 0 0.75rem 0;">
+            Save computers and appliances that support Wake-on-LAN, then send a magic packet from this ESP32.
+            Leave broadcast empty to derive it from the current uplink (for example <code class="mono">192.168.1.255</code>).
+          </p>
+          <div id="wol-list"></div>
+          <div style="margin-top:0.75rem;">
+            <button class="btn btn-secondary btn-md" id="wol-add-btn" type="button">+ Add device</button>
+          </div>
+        </div>
+        <div class="form-footer">
+          <span class="form-footer-hint">Magic packets use UDP port 9 by default. Saved devices are also exposed as Home Assistant buttons when MQTT discovery is enabled.</span>
+          <div class="form-footer-actions">
+            <button class="btn btn-secondary btn-md" id="wol-reload">Reload</button>
+            <button class="btn btn-primary btn-md" id="wol-save" disabled>Save</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== MQTT + Home Assistant ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left"><span class="card-title">MQTT &amp; Home Assistant</span></div>
+          <span class="badge badge-neutral" id="mqtt-badge">—</span>
+        </div>
+        <div class="card-body">
+          <div class="form-group">
+            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+              <input type="checkbox" id="mqtt-enabled"> Enable MQTT
+            </label>
+            <span class="form-hint">Publishes a retained status packet and listens for commands. Supports <code class="mono">mqtt://</code>, <code class="mono">mqtts://</code>, WebSocket and secure WebSocket broker URIs.</span>
+          </div>
+          <div class="grid grid-cols-2">
+            <div class="form-group"><label class="form-label" for="mqtt-uri">Broker URI</label><input class="input mono" id="mqtt-uri" placeholder="mqtt://192.168.1.10:1883"></div>
+            <div class="form-group"><label class="form-label" for="mqtt-topic">Base topic</label><input class="input mono" id="mqtt-topic" placeholder="esp32-router/a1b2c3"></div>
+          </div>
+          <div class="grid grid-cols-2">
+            <div class="form-group"><label class="form-label" for="mqtt-user">Username</label><input class="input" id="mqtt-user" autocomplete="username"></div>
+            <div class="form-group"><label class="form-label" for="mqtt-password">Password</label><input class="input" type="password" id="mqtt-password" autocomplete="new-password" placeholder="Leave empty to keep current"><label class="form-hint" style="display:flex; gap:0.35rem; align-items:center;"><input type="checkbox" id="mqtt-password-clear"> Clear saved password</label></div>
+          </div>
+          <div class="grid grid-cols-2">
+            <div class="form-group"><label class="form-label" for="mqtt-interval">Status interval (seconds)</label><input class="input mono" type="number" id="mqtt-interval" min="5" max="3600" value="30"></div>
+            <div class="form-group"><label class="form-label" for="mqtt-ha-prefix">Discovery prefix</label><input class="input mono" id="mqtt-ha-prefix" value="homeassistant"></div>
+          </div>
+          <div class="form-group">
+            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+              <input type="checkbox" id="mqtt-ha-enabled"> Home Assistant MQTT discovery
+            </label>
+            <span class="form-hint">Creates full device diagnostics plus AP/Tailscale/routing switches, WiFi and Tailscale reconnect buttons, restart/status buttons, and one Wake button per saved WOL device.</span>
+          </div>
+          <div class="form-group" style="padding-top:0.75rem; border-top:1px solid var(--border);">
+            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+              <input type="checkbox" id="mqtt-watchdog-enabled"> Wake the MQTT broker when it stays offline
+            </label>
+            <span class="form-hint">After a continuous broker outage, sends one three-packet WOL burst to a saved device. It re-arms only after MQTT connects again, so it cannot flood the LAN.</span>
+          </div>
+          <div class="grid grid-cols-2">
+            <div class="form-group"><label class="form-label" for="mqtt-watchdog-timeout">Offline timeout (seconds)</label><input class="input mono" type="number" id="mqtt-watchdog-timeout" min="30" max="86400" value="300"></div>
+            <div class="form-group"><label class="form-label" for="mqtt-watchdog-target">Broker WOL device</label><select class="input" id="mqtt-watchdog-target"><option value="">— save a WOL device first —</option></select></div>
+          </div>
+          <div class="form-hint mono" id="mqtt-watchdog-status">—</div>
+          <div class="form-hint mono" id="mqtt-topics-help">—</div>
+        </div>
+        <div class="form-footer">
+          <span class="form-footer-hint">Changes apply live. TLS connections validate the broker certificate with the ESP-IDF CA bundle.</span>
+          <div class="form-footer-actions">
+            <button class="btn btn-ghost btn-md" id="mqtt-publish" type="button">Publish now</button>
+            <button class="btn btn-secondary btn-md" id="mqtt-reload" type="button">Reload</button>
+            <button class="btn btn-primary btn-md" id="mqtt-save" type="button" disabled>Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- =================================================================
          SYSTEM PAGE
          =============================================================== -->
     <div class="page-section" id="page-system">
@@ -2600,60 +2675,6 @@
         </div>
       </div>
 
-      <!-- ===== MQTT + Home Assistant ===== -->
-      <div class="card mt-4">
-        <div class="card-header">
-          <div class="card-header-left"><span class="card-title">MQTT &amp; Home Assistant</span></div>
-          <span class="badge badge-neutral" id="mqtt-badge">—</span>
-        </div>
-        <div class="card-body">
-          <div class="form-group">
-            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
-              <input type="checkbox" id="mqtt-enabled"> Enable MQTT
-            </label>
-            <span class="form-hint">Publishes a retained status packet and listens for commands. Supports <code class="mono">mqtt://</code>, <code class="mono">mqtts://</code>, WebSocket and secure WebSocket broker URIs.</span>
-          </div>
-          <div class="grid grid-cols-2">
-            <div class="form-group"><label class="form-label" for="mqtt-uri">Broker URI</label><input class="input mono" id="mqtt-uri" placeholder="mqtt://192.168.1.10:1883"></div>
-            <div class="form-group"><label class="form-label" for="mqtt-topic">Base topic</label><input class="input mono" id="mqtt-topic" placeholder="esp32-router/a1b2c3"></div>
-          </div>
-          <div class="grid grid-cols-2">
-            <div class="form-group"><label class="form-label" for="mqtt-user">Username</label><input class="input" id="mqtt-user" autocomplete="username"></div>
-            <div class="form-group"><label class="form-label" for="mqtt-password">Password</label><input class="input" type="password" id="mqtt-password" autocomplete="new-password" placeholder="Leave empty to keep current"><label class="form-hint" style="display:flex; gap:0.35rem; align-items:center;"><input type="checkbox" id="mqtt-password-clear"> Clear saved password</label></div>
-          </div>
-          <div class="grid grid-cols-2">
-            <div class="form-group"><label class="form-label" for="mqtt-interval">Status interval (seconds)</label><input class="input mono" type="number" id="mqtt-interval" min="5" max="3600" value="30"></div>
-            <div class="form-group"><label class="form-label" for="mqtt-ha-prefix">Discovery prefix</label><input class="input mono" id="mqtt-ha-prefix" value="homeassistant"></div>
-          </div>
-          <div class="form-group">
-            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
-              <input type="checkbox" id="mqtt-ha-enabled"> Home Assistant MQTT discovery
-            </label>
-            <span class="form-hint">Creates uplink/Tailscale/status sensors, an “AP always on” switch, a restart button, and a Wake button for every saved WOL device.</span>
-          </div>
-          <div class="form-group" style="padding-top:0.75rem; border-top:1px solid var(--border);">
-            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
-              <input type="checkbox" id="mqtt-watchdog-enabled"> Wake the MQTT broker when it stays offline
-            </label>
-            <span class="form-hint">After a continuous broker outage, sends one three-packet WOL burst to a saved device. It re-arms only after MQTT connects again, so it cannot flood the LAN.</span>
-          </div>
-          <div class="grid grid-cols-2">
-            <div class="form-group"><label class="form-label" for="mqtt-watchdog-timeout">Offline timeout (seconds)</label><input class="input mono" type="number" id="mqtt-watchdog-timeout" min="30" max="86400" value="300"></div>
-            <div class="form-group"><label class="form-label" for="mqtt-watchdog-target">Broker WOL device</label><select class="input" id="mqtt-watchdog-target"><option value="">— save a WOL device first —</option></select></div>
-          </div>
-          <div class="form-hint mono" id="mqtt-watchdog-status">—</div>
-          <div class="form-hint mono" id="mqtt-topics-help">—</div>
-        </div>
-        <div class="form-footer">
-          <span class="form-footer-hint">Changes apply live. TLS connections validate the broker certificate with the ESP-IDF CA bundle.</span>
-          <div class="form-footer-actions">
-            <button class="btn btn-ghost btn-md" id="mqtt-publish" type="button">Publish now</button>
-            <button class="btn btn-secondary btn-md" id="mqtt-reload" type="button">Reload</button>
-            <button class="btn btn-primary btn-md" id="mqtt-save" type="button" disabled>Save</button>
-          </div>
-        </div>
-      </div>
-
       <!-- ===== SD flight-recorder ===== -->
       <div class="card mt-4">
         <div class="card-header">
@@ -2747,10 +2768,20 @@
           <span class="badge badge-neutral" id="sys-auth-to-badge">—</span>
         </div>
         <div class="card-body">
+          <div class="form-group">
+            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+              <input type="checkbox" id="sys-web-auth-enabled"> Require the admin password for the web UI
+            </label>
+            <span class="form-hint"><strong>Warning:</strong> turning this off lets anyone who can reach the ESP32 change its normal settings. Secret export/import, identity reset, factory reset, firmware upload and the TCP remote console still require a real password-backed session; re-enable the gate to use them later.</span>
+          </div>
+          <div style="text-align:right; margin-bottom:1rem;">
+            <button class="btn btn-primary btn-md" id="sys-web-auth-save" disabled>Save password gate</button>
+          </div>
           <p class="form-hint" style="margin:0 0 0.75rem 0;">After this much idle time the web UI logs you out and asks for the password again. Every click or tab refresh resets the countdown.</p>
           <div class="form-group">
             <label class="form-label" for="sys-auth-to">Idle timeout</label>
             <select class="input" id="sys-auth-to" style="max-width:18rem;">
+              <option value="0">Disabled — until logout, browser close, or reboot</option>
               <option value="300">5 minutes</option>
               <option value="900">15 minutes</option>
               <option value="1800">30 minutes</option>
@@ -2762,7 +2793,7 @@
           </div>
         </div>
         <div class="form-footer">
-          <span class="form-footer-hint">Applies immediately — your current session inherits the new window on the next request.</span>
+          <span class="form-footer-hint">Applies immediately. A disabled timeout uses a browser-session cookie; manual logout and reboot still invalidate it.</span>
           <div class="form-footer-actions">
             <button class="btn btn-primary btn-md" id="sys-auth-to-save" disabled>Save</button>
           </div>
@@ -2788,12 +2819,12 @@
             <div class="grid grid-cols-2">
               <div class="form-group">
                 <label class="form-label" for="sys-pw-new">New password</label>
-                <input class="input" type="password" id="sys-pw-new" name="new-password" autocomplete="new-password" minlength="8">
-                <span class="form-hint">Min 8 chars, with a lowercase, uppercase, digit, and special character.</span>
+                <input class="input" type="password" id="sys-pw-new" name="new-password" autocomplete="new-password" minlength="4">
+                <span class="form-hint">Minimum 4 characters; no composition rules. Prefer a stronger password if the UI is reachable from your tailnet.</span>
               </div>
               <div class="form-group">
                 <label class="form-label" for="sys-pw-new2">Confirm new password</label>
-                <input class="input" type="password" id="sys-pw-new2" name="confirm-password" autocomplete="new-password" minlength="8">
+                <input class="input" type="password" id="sys-pw-new2" name="confirm-password" autocomplete="new-password" minlength="4">
               </div>
             </div>
             <div class="auth-error" id="sys-pw-error" style="display:none;"></div>
@@ -3002,6 +3033,10 @@
         if (page === 'network'   && typeof loadNetwork   === 'function') loadNetwork();
         if (page === 'tailscale' && typeof loadTailscale === 'function') loadTailscale();
         if (page === 'firewall'  && typeof loadFirewall  === 'function') loadFirewall();
+        if (page === 'automation') {
+          if (typeof loadWol  === 'function') loadWol();
+          if (typeof loadMqtt === 'function') loadMqtt();
+        }
         if (page === 'system'    && typeof loadSystem    === 'function') loadSystem();
         if (page === 'tools'     && typeof loadDiag      === 'function') loadDiag();
         if (page === 'tools'     && typeof loadPrecrashLog === 'function') loadPrecrashLog();
@@ -3561,6 +3596,8 @@
     // AUTH — helpers
     // =====================================================================
 
+    var s_web_auth_required = true;
+
     function showAuthOverlay(which) {
       // which: 'setup' | 'login' | null
       var setupEl = document.getElementById('authSetup');
@@ -3579,7 +3616,8 @@
       }
 
       // Show/hide lock button based on auth state
-      if (lockBtn) lockBtn.style.display = (which === null) ? 'inline-flex' : 'none';
+      if (lockBtn) lockBtn.style.display =
+        (which === null && s_web_auth_required) ? 'inline-flex' : 'none';
       /* Login / setup overlays own the screen — drop the countdown when
        * either is up so it doesn't tick behind the modal. */
       if (which !== null && typeof sessionCountdownTick === 'function') sessionCountdownTick();
@@ -3864,7 +3902,11 @@
     function fetchAuthStatusForCountdown() {
       fetch('/api/auth/status', { credentials: 'same-origin', cache: 'no-store' })
         .then(function (r) { return r.json(); })
-        .then(function (s) { sessionCountdownConfig(s.session_timeout_s, s.session_remaining_s); })
+        .then(function (s) {
+          s_web_auth_required = !!s.auth_required;
+          sessionCountdownConfig(s.session_timeout_s, s.session_remaining_s);
+          showAuthOverlay(null);
+        })
         .catch(function () {});
     }
 
@@ -3873,11 +3915,7 @@
     // wording so the SPA shows the same message the server would return.
     // =====================================================================
     function checkPasswordPolicy(pw) {
-      if (!pw || pw.length < 8)         return 'Password must be at least 8 characters.';
-      if (!/[a-z]/.test(pw))            return 'Password must include a lowercase letter.';
-      if (!/[A-Z]/.test(pw))            return 'Password must include an uppercase letter.';
-      if (!/[0-9]/.test(pw))            return 'Password must include a digit.';
-      if (!/[^A-Za-z0-9]/.test(pw))     return 'Password must include a special character.';
+      if (!pw || pw.length < 4) return 'Password must be at least 4 characters.';
       return null;
     }
 
@@ -4324,7 +4362,6 @@
 
       /* DHCP reservations + connected-client/lease snapshot. */
       loadDhcpReservations();
-      loadWol();
       loadDhcpLeases();
       loadDenylist();
       loadPortmap();
@@ -6221,7 +6258,7 @@
             : 'Armed after each successful MQTT connection · wake count: ' + (d.broker_watchdog_wake_count || 0));
       var topic = d.base_topic || '…';
       document.getElementById('mqtt-topics-help').textContent =
-        'State: ' + topic + '/state · commands: ' + topic + '/command/#';
+        'State: ' + topic + '/state · all Home Assistant controls: ' + topic + '/command/#';
       document.getElementById('mqtt-save').disabled = true;
     }
 
@@ -6309,7 +6346,6 @@
     });
 
     function loadSystem() {
-      loadMqtt();
       apiFetch('/api/system')
         .then(function (r) { return r.json(); })
         .then(function (d) {
@@ -6366,11 +6402,15 @@
           /* SD flight-recorder card refreshes on every System-tab load. */
           if (typeof loadSdlog === 'function') loadSdlog();
 
+          var authToggle = document.getElementById('sys-web-auth-enabled');
+          authToggle.checked = d.web_auth_enabled !== false;
+          document.getElementById('sys-web-auth-save').disabled = true;
+
           /* Idle session timeout — snap the select to whichever option
            * matches the persisted value, falling back to 30 min if the
            * server returned something we don't render as a choice. */
           var to = parseInt(d.session_timeout_s, 10);
-          if (!to || to <= 0) to = 1800;
+          if (isNaN(to) || to < 0) to = 1800;
           var sel = document.getElementById('sys-auth-to');
           var match = false;
           for (var i = 0; i < sel.options.length; i++) {
@@ -6380,7 +6420,8 @@
           document.getElementById('sys-auth-to-save').disabled = true;
           var toBadge = document.getElementById('sys-auth-to-badge');
           var label;
-          if (to >= 3600) label = (to / 3600) + ' h';
+          if (to === 0)   label = 'Disabled';
+          else if (to >= 3600) label = (to / 3600) + ' h';
           else            label = (to / 60)   + ' min';
           toBadge.className   = 'badge badge-neutral';
           toBadge.textContent = label;
@@ -7120,7 +7161,8 @@
       document.getElementById('sys-auth-to-save').disabled = false;
     });
     document.getElementById('sys-auth-to-save').addEventListener('click', function () {
-      var v = parseInt(document.getElementById('sys-auth-to').value, 10) || 1800;
+      var v = parseInt(document.getElementById('sys-auth-to').value, 10);
+      if (isNaN(v) || v < 0) v = 1800;
       var btn = this;
       btn.disabled = true;
       apiFetch('/api/system', {
@@ -7135,6 +7177,47 @@
           loadSystem();
         })
         .catch(function () { btn.disabled = false; showToast('error', 'Save failed', '', 5000); });
+    });
+
+    document.getElementById('sys-web-auth-enabled').addEventListener('change', function () {
+      document.getElementById('sys-web-auth-save').disabled = false;
+    });
+    document.getElementById('sys-web-auth-save').addEventListener('click', function () {
+      var enabled = document.getElementById('sys-web-auth-enabled').checked;
+      var save = function () {
+        var btn = document.getElementById('sys-web-auth-save');
+        btn.disabled = true;
+        apiFetch('/api/system', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ web_auth_enabled: enabled })
+        }).then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        }).then(function () {
+          s_web_auth_required = enabled;
+          showAuthOverlay(null);
+          showToast('success', 'Password gate saved',
+                    enabled ? 'Web login is required.' : 'Web UI is now open to reachable clients.',
+                    5000);
+          loadSystem();
+        }).catch(function () {
+          btn.disabled = false;
+          showToast('error', 'Save failed', '', 5000);
+        });
+      };
+      if (enabled) {
+        save();
+      } else {
+        showConfirm('Disable the web password?',
+                    'Anyone on the local network or tailnet who can reach this ESP32 will be able to change its settings. Secret backups and the remote console stay protected.',
+                    save, { danger: true, confirmText: 'Disable password gate' });
+      }
+    });
+
+    document.getElementById('automation-reload').addEventListener('click', function () {
+      loadWol();
+      loadMqtt();
     });
 
     document.getElementById('sys-reload').addEventListener('click', loadSystem);
@@ -7587,6 +7670,7 @@
       .then(function (r) { return r.json(); })
       .then(function (s) {
         updateBrandName(s.device_name);
+        s_web_auth_required = !!s.auth_required;
         /* When no password is set the device is wide open. Don't drop
          * into the dashboard — force the operator through the setup
          * wizard so the next thing they do is define a password.
@@ -7594,8 +7678,12 @@
          * because request_authenticated() returns true with no
          * password, and the wizard branch only fired when authenticated
          * was already false. */
-        if (!s.auth_required) {
+        if (s.auth_enabled !== false && !s.password_set) {
           showAuthOverlay('setup');
+        } else if (!s.auth_required) {
+          showAuthOverlay(null);
+          sessionCountdownHide();
+          loadDashboard();
         } else if (s.authenticated) {
           showAuthOverlay(null);
           sessionCountdownConfig(s.session_timeout_s, s.session_remaining_s);
