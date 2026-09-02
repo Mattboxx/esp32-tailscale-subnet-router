@@ -1546,26 +1546,6 @@
         </div>
       </div>
 
-      <!-- Firmware-update banner — surfaced only when the OTA poller saw a
-           newer release than what's currently running. Clicking it jumps
-           to the System tab OTA card. -->
-      <div id="status-ota-banner" class="card mb-4" role="alert" tabindex="0"
-           style="display:none; cursor:pointer; padding:0.75rem 1rem;
-                  background:var(--warning-muted); border:1px solid var(--warning-border);
-                  display:none; align-items:center; gap:0.75rem;">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
-          <line x1="12" y1="9" x2="12" y2="13"/>
-          <line x1="12" y1="17" x2="12.01" y2="17"/>
-        </svg>
-        <div style="flex:1;">
-          <strong>Firmware update available:</strong>
-          <span class="mono" id="status-ota-banner-version">—</span>
-          <span class="form-hint" id="status-ota-banner-detail" style="margin-left:0.5rem;"></span>
-        </div>
-        <span style="color:var(--warning); font-weight:var(--weight-semibold);">View →</span>
-      </div>
-
       <!-- Row 1: Uplink + AP (side by side on tablet+) -->
       <div class="grid grid-cols-2 mb-4">
 
@@ -1932,7 +1912,7 @@
           <div class="form-group" style="margin-top:0.25rem;">
             <label class="form-label" for="net-ap-dns">DNS served to AP clients</label>
             <input class="input mono" type="text" id="net-ap-dns" placeholder="empty = this device (on-board forwarder)">
-            <span class="form-hint">DHCP Option 6 — what AP clients learn as their resolver. Empty hands out this device's own AP IP and routes lookups through the on-board forwarder below (the usual setup). Pin an external IP (Pi-hole, <code class="mono">1.1.1.1</code>) to bypass the forwarder entirely.</span>
+            <span class="form-hint">DHCP Option 6 — what AP clients learn as their resolver. Empty hands out this device's own AP IP and routes lookups through the on-board forwarder below (the usual setup). Enter a LAN resolver such as Pi-hole to bypass the forwarder.</span>
           </div>
           <div class="form-group" style="margin-top:0.25rem;">
             <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
@@ -1949,8 +1929,8 @@
           </div>
           <div class="form-group" style="margin-top:0.25rem;">
             <label class="form-label" for="net-ap-dns-relay-upstream">Forwarder upstream</label>
-            <input class="input mono" type="text" id="net-ap-dns-relay-upstream" placeholder="empty = use whatever STA learned, falling back to 1.1.1.1">
-            <span class="form-hint">Where the forwarder sends queries it cannot answer locally. Common picks: <code class="mono">1.1.1.1</code>, <code class="mono">8.8.8.8</code>, or a Pi-hole on your LAN.</span>
+            <input class="input mono" type="text" id="net-ap-dns-relay-upstream" placeholder="empty = use the DNS learned by the STA">
+            <span class="form-hint">Where the forwarder sends queries it cannot answer locally. Leave empty to follow the uplink DHCP lease, or enter a resolver on your LAN.</span>
           </div>
           <div class="form-group" style="margin-top:0.25rem;">
             <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
@@ -2375,24 +2355,6 @@
         </div>
       </div>
 
-      <!-- ===== Speed test (from device) ===== -->
-      <div class="card mt-4">
-        <div class="card-header">
-          <div class="card-header-left">
-            <span class="card-title">Speed test (from device)</span>
-          </div>
-        </div>
-        <div class="card-body">
-          <p class="form-hint" style="margin:0 0 0.75rem 0;">Rough 1 MB transfer over the device's own STA uplink (Cloudflare endpoint). Confirms whether a slowdown is upstream of the router vs. an AP-client / forwarding issue — self-origin traffic bypasses any exit-node tunnel. Timing excludes the TLS handshake.</p>
-          <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
-            <button class="btn btn-primary btn-md" id="tool-net-down">⬇ Download 1 MB</button>
-            <button class="btn btn-primary btn-md" id="tool-net-up">⬆ Upload 1 MB</button>
-            <button class="btn btn-ghost btn-md" id="tool-net-cancel" style="display:none;">Cancel</button>
-          </div>
-          <div id="tool-net-result" class="mono" style="font-size:0.85rem; margin-top:0.75rem;">—</div>
-        </div>
-      </div>
-
       <!-- ===== WiFi Scan ===== -->
       <div class="card mt-4">
         <div class="card-header">
@@ -2547,7 +2509,7 @@
       <div class="page-header">
         <div class="page-header-left">
           <h1 class="page-title">System</h1>
-          <p class="page-subtitle">Firmware info, telemetry, password, OTA, about, danger zone</p>
+          <p class="page-subtitle">Firmware info, local logs, password, manual update, backup</p>
         </div>
         <div class="page-header-actions">
           <button class="btn btn-secondary btn-md" id="sys-reload">Refresh</button>
@@ -2625,7 +2587,7 @@
           <div class="stat-row"><span class="stat-label">Firmware version</span><span class="stat-value mono" id="sys-version">—</span></div>
           <div class="stat-row"><span class="stat-label">Build tag</span>        <span class="stat-value mono" id="sys-build-tag" title="—">—</span></div>
           <div class="stat-row"><span class="stat-label">ESP-IDF</span>          <span class="stat-value mono" id="sys-idf">—</span></div>
-          <div class="stat-row"><span class="stat-label">Device hash</span>      <span class="stat-value mono" id="sys-dh">—</span></div>
+          <div class="stat-row"><span class="stat-label">Outbound telemetry</span><span class="stat-value mono">Disabled (not compiled in)</span></div>
         </div>
         <div class="form-footer">
           <span class="form-footer-hint">Friendly-name change applies immediately. Backup optionally includes WiFi/AP/EAP passwords + Tailscale auth key, encrypted with a passphrase you choose.</span>
@@ -2669,6 +2631,17 @@
             </label>
             <span class="form-hint">Creates uplink/Tailscale/status sensors, an “AP always on” switch, a restart button, and a Wake button for every saved WOL device.</span>
           </div>
+          <div class="form-group" style="padding-top:0.75rem; border-top:1px solid var(--border);">
+            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+              <input type="checkbox" id="mqtt-watchdog-enabled"> Wake the MQTT broker when it stays offline
+            </label>
+            <span class="form-hint">After a continuous broker outage, sends one three-packet WOL burst to a saved device. It re-arms only after MQTT connects again, so it cannot flood the LAN.</span>
+          </div>
+          <div class="grid grid-cols-2">
+            <div class="form-group"><label class="form-label" for="mqtt-watchdog-timeout">Offline timeout (seconds)</label><input class="input mono" type="number" id="mqtt-watchdog-timeout" min="30" max="86400" value="300"></div>
+            <div class="form-group"><label class="form-label" for="mqtt-watchdog-target">Broker WOL device</label><select class="input" id="mqtt-watchdog-target"><option value="">— save a WOL device first —</option></select></div>
+          </div>
+          <div class="form-hint mono" id="mqtt-watchdog-status">—</div>
           <div class="form-hint mono" id="mqtt-topics-help">—</div>
         </div>
         <div class="form-footer">
@@ -2728,56 +2701,22 @@
         </div>
       </div>
 
-      <!-- ===== Firmware update (OTA) ===== -->
+      <!-- ===== Local manual firmware update ===== -->
       <div class="card mt-4">
         <div class="card-header">
           <div class="card-header-left">
             <span class="card-title">Firmware update</span>
           </div>
-          <span class="badge badge-neutral" id="sys-ota-badge">—</span>
+          <span class="badge badge-neutral" id="sys-ota-badge">Manual only</span>
         </div>
         <div class="card-body">
-          <p class="form-hint" style="margin:0 0 0.75rem 0;">The device checks the project's GitHub Releases once a day and right after boot. You can opt in to automatic install, pick a preferred install hour, or apply updates manually.</p>
+          <p class="form-hint" style="margin:0 0 0.75rem 0;">Updates are never fetched by the ESP32. Upload a trusted local <code class="mono">firmware.bin</code>; it is written to the inactive OTA partition and verified by the bootloader after reboot.</p>
           <div class="grid grid-cols-2">
             <div class="stat-row" style="border-top:none;">
               <span class="stat-label">Running</span>
               <span class="stat-value mono" id="sys-ota-running">—</span>
             </div>
-            <div class="stat-row" style="border-top:none;">
-              <span class="stat-label">Latest seen</span>
-              <span class="stat-value mono" id="sys-ota-latest">—</span>
-            </div>
-            <div class="stat-row" style="border-top:none;">
-              <span class="stat-label">Last check</span>
-              <span class="stat-value mono" id="sys-ota-last">—</span>
-            </div>
-            <div class="stat-row" style="border-top:none;">
-              <span class="stat-label">Status</span>
-              <span class="stat-value mono" id="sys-ota-status">—</span>
-            </div>
           </div>
-          <div class="form-group" style="margin-top:0.5rem;">
-            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
-              <input type="checkbox" id="sys-ota-auto"> Install updates automatically
-            </label>
-          </div>
-          <div class="form-group" style="margin-top:0.5rem;">
-            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
-              <input type="checkbox" id="sys-ota-beta"> Beta channel (include pre-releases)
-            </label>
-            <span class="form-hint">Test devices only — also offers GitHub pre-releases. Off = stable releases only.</span>
-          </div>
-          <div class="form-group" id="sys-ota-hour-wrap">
-            <label class="form-label" for="sys-ota-hour">Install hour (local time)</label>
-            <select class="input" id="sys-ota-hour">
-              <option value="-1">As soon as detected</option>
-            </select>
-            <span class="form-hint">When auto-install is on and an update is found, the install waits for this hour and then reboots into the new firmware.</span>
-          </div>
-          <details id="sys-ota-notes-wrap" style="margin-top:0.6rem;">
-            <summary style="cursor:pointer; color:var(--fg-secondary);">Release notes</summary>
-            <pre class="mono" id="sys-ota-notes" style="white-space:pre-wrap; word-break:break-word; padding:0.6rem; background:var(--bg-elevated); border:1px solid var(--border); border-radius:4px; font-size:var(--text-xs); max-height:240px; overflow-y:auto;">—</pre>
-          </details>
           <hr style="border:none; border-top:1px solid var(--border); margin:1rem 0 0.5rem 0;">
           <div class="form-group">
             <label class="form-label" for="sys-ota-file">Manual upload (firmware.bin)</label>
@@ -2792,12 +2731,9 @@
           </div>
         </div>
         <div class="form-footer">
-          <span class="form-footer-hint" id="sys-ota-last-ver">—</span>
+          <span class="form-footer-hint">No release polling and no automatic download.</span>
           <div class="form-footer-actions">
-            <button class="btn btn-secondary btn-md" id="sys-ota-check">Check now</button>
-            <button class="btn btn-primary btn-md" id="sys-ota-install" disabled>Install now</button>
             <button class="btn btn-primary btn-md" id="sys-ota-upload" disabled>Upload &amp; reboot</button>
-            <button class="btn btn-primary btn-md" id="sys-ota-save" disabled>Save</button>
           </div>
         </div>
       </div>
@@ -2884,16 +2820,7 @@
           <div class="stat-row"><span class="stat-label">Issues</span><span class="stat-value mono"><a href="https://github.com/Csontikka/esp32-tailscale-subnet-router/issues" target="_blank" rel="noopener" style="color:var(--accent);">github.com/&hellip;/issues</a></span></div>
           <div class="stat-row"><span class="stat-label">Tailscale stack</span><span class="stat-value mono"><a href="https://github.com/Csontikka/microlink" target="_blank" rel="noopener" style="color:var(--accent);">Csontikka/microlink</a> (userspace WireGuard + DERP + DISCO)</span></div>
           <div class="stat-row"><span class="stat-label">License</span><span class="stat-value mono">MIT — see LICENSE in the repo</span></div>
-          <div class="stat-row" title="Sends a SHA-256 device hash + boot/flash counters + firmware version every 24 h. Never sends SSIDs, IP addresses, MAC addresses, or peer information.">
-            <span class="stat-label">Anonymous telemetry</span>
-            <span class="stat-value">
-              <label style="display:inline-flex; align-items:center; gap:0.45rem; cursor:pointer;">
-                <input type="checkbox" id="about-tlm-enabled">
-                <span class="mono" id="about-tlm-state">—</span>
-              </label>
-            </span>
-          </div>
-          <p class="form-hint" style="margin-top:0.5rem;">No personal data leaves the device unless telemetry is enabled above — and even then only an anonymous SHA-256 hash + boot/flash counters + firmware version are sent. (Hover the toggle for details.)</p>
+          <div class="stat-row"><span class="stat-label">Privacy</span><span class="stat-value mono">No telemetry / no update polling</span></div>
         </div>
       </div>
 
@@ -2940,7 +2867,7 @@
           <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem; padding:0.6rem 0;">
             <div>
               <div style="font-weight:500;">Factory reset</div>
-              <div class="text-muted" style="font-size:0.85rem;">Erases ALL NVS settings — WiFi, Tailscale, ACL rules, password, telemetry. Reboots into the first-boot wizard. This cannot be undone.</div>
+              <div class="text-muted" style="font-size:0.85rem;">Erases ALL NVS settings — WiFi, Tailscale, ACL rules, MQTT/WOL, password. Reboots into the first-boot wizard. This cannot be undone.</div>
             </div>
             <button class="btn btn-danger btn-sm" id="sys-factory-btn">Factory reset</button>
           </div>
@@ -3469,59 +3396,9 @@
        * adding payload to the hot /api/status response. */
       fetchTailscalePeers();
 
-      /* Surface the OTA banner if a newer release was seen. */
-      updateOtaBanner(data.ota || {});
-
       // Timestamp
       document.getElementById('status-updated').textContent = 'Last updated ' + new Date().toLocaleTimeString();
     }
-
-    /* Status-page firmware-update banner. Shown whenever the OTA poller
-     * has seen a release newer than the running app. Auto-install on +
-     * scheduled hour gets a "scheduled for HH:00" hint; auto-install off
-     * gets the more urgent "click to install" framing. */
-    function updateOtaBanner(o) {
-      var b   = document.getElementById('status-ota-banner');
-      var v   = document.getElementById('status-ota-banner-version');
-      var det = document.getElementById('status-ota-banner-detail');
-      if (!b || !v || !det) return;
-      if (!o || !o.update_available) {
-        b.style.display = 'none';
-        return;
-      }
-      v.textContent = o.latest_version || '?';
-      var detail = 'currently running ' + (o.running_version || '?');
-      if (o.auto_install) {
-        if (o.install_hour < 0 || o.install_hour > 23) {
-          detail += ' — auto-install at next opportunity';
-        } else {
-          var hh = (o.install_hour < 10 ? '0' : '') + o.install_hour;
-          detail += ' — auto-install scheduled at ' + hh + ':00';
-        }
-      } else {
-        detail += ' — auto-install is off; click to install manually';
-      }
-      det.textContent = detail;
-      b.style.display = 'flex';
-    }
-
-    /* One-shot wiring — click the banner to jump to the System tab's
-     * OTA card. Runs at script-eval time; the banner element exists
-     * even when hidden, so the listener attaches once. */
-    (function () {
-      var b = document.getElementById('status-ota-banner');
-      if (!b) return;
-      b.addEventListener('click', function () {
-        var tab = document.querySelector('.nav-tab[data-page="system"]');
-        if (tab) tab.click();
-        setTimeout(function () {
-          var card = document.getElementById('sys-ota-badge');
-          if (card && card.scrollIntoView) {
-            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          }
-        }, 100);
-      });
-    })();
 
     /* Pull the live peer list from /api/tailscale and render it on the
      * Status-page peer mini-table. Replaces the designer-prototype
@@ -6114,60 +5991,6 @@
       if (e.key === 'Enter') document.getElementById('tool-trace-run').click();
     });
 
-    /* On-device 1 MB speed test (download / upload) with live poll + cancel. */
-    (function () {
-      var dBtn = document.getElementById('tool-net-down');
-      var uBtn = document.getElementById('tool-net-up');
-      var cBtn = document.getElementById('tool-net-cancel');
-      var out  = document.getElementById('tool-net-result');
-      if (!dBtn || !uBtn || !cBtn || !out) return;
-      var poll = null;
-      function fmt(kbps) {
-        return kbps >= 1000 ? (kbps / 1000).toFixed(2) + ' Mbit/s' : (kbps | 0) + ' kbit/s';
-      }
-      function setRunning(on) {
-        dBtn.disabled = on; uBtn.disabled = on;
-        cBtn.style.display = on ? '' : 'none';
-      }
-      function stopPoll() { if (poll) { clearInterval(poll); poll = null; } }
-      function render(d) {
-        if (d.state === 'running') {
-          out.textContent = (d.dir === 'up' ? 'Uploading' : 'Downloading') + ' 1 MB…';
-          return;
-        }
-        stopPoll(); setRunning(false);
-        if (d.state === 'done') {
-          out.innerHTML = (d.dir === 'up' ? '⬆ Upload' : '⬇ Download') + ': <strong>' + fmt(d.kbps) +
-            '</strong> (' + (d.bytes / 1048576).toFixed(2) + ' MB / ' + (d.ms / 1000).toFixed(1) + ' s)';
-        } else if (d.state === 'cancelled') {
-          out.textContent = 'Cancelled (' + (d.bytes / 1024).toFixed(0) + ' KB in ' + (d.ms / 1000).toFixed(1) + ' s)';
-        } else {
-          out.textContent = 'Failed: ' + (d.err || d.state);
-        }
-      }
-      function start(dir) {
-        out.textContent = 'Starting…'; setRunning(true);
-        apiFetch('/api/tools/nettest?dir=' + dir, { method: 'POST' })
-          .then(function (r) { return r.json(); })
-          .then(function (j) {
-            if (!j.ok) { setRunning(false); out.textContent = 'Failed: ' + (j.err || 'busy'); return; }
-            poll = setInterval(function () {
-              apiFetch('/api/tools/nettest')
-                .then(function (r) { return r.json(); })
-                .then(render)
-                .catch(function () {});
-            }, 700);
-          })
-          .catch(function (e) { setRunning(false); out.textContent = 'Failed: ' + (e.message || e); });
-      }
-      dBtn.addEventListener('click', function () { start('down'); });
-      uBtn.addEventListener('click', function () { start('up'); });
-      cBtn.addEventListener('click', function () {
-        out.textContent = 'Cancelling…';
-        apiFetch('/api/tools/nettest?cancel=1', { method: 'POST' }).catch(function () {});
-      });
-    })();
-
     document.getElementById('tool-scan-run').addEventListener('click', function () {
       var btn = this;
       var body = document.getElementById('tool-scan-body');
@@ -6207,11 +6030,8 @@
     // =====================================================================
     // SYSTEM PAGE
     // =====================================================================
-    /* Convert ESP-IDF's __DATE__/__TIME__ pair into the compact build
-     * tag the telemetry heartbeat uses: V<YY>.<MMDD>.<HHMM>. The same
-     * string lands on the Device card and on the About card so the
-     * operator can match what they see locally against what telemetry
-     * reports on the worker dashboard. Returns "—" on parse failure. */
+    /* Convert ESP-IDF's __DATE__/__TIME__ pair into the compact build tag
+     * V<YY>.<MMDD>.<HHMM>. The raw compiler date remains in the tooltip. */
     function formatBuildTag(date, time) {
       if (!date || !time) return '—';
       var months = 'JanFebMarAprMayJunJulAugSepOctNovDec';
@@ -6357,7 +6177,7 @@
       if (btn) btn.addEventListener('click', loadDiag);
     })();
 
-    function renderMqttState(d) {
+    function renderMqttState(d, wolDevices) {
       var badge = document.getElementById('mqtt-badge');
       if (!d.enabled) {
         badge.className = 'badge badge-neutral'; badge.textContent = 'Disabled';
@@ -6376,6 +6196,29 @@
       document.getElementById('mqtt-interval').value = d.interval_seconds || 30;
       document.getElementById('mqtt-ha-enabled').checked = !!d.home_assistant_discovery;
       document.getElementById('mqtt-ha-prefix').value = d.discovery_prefix || 'homeassistant';
+      document.getElementById('mqtt-watchdog-enabled').checked = !!d.broker_watchdog_enabled;
+      document.getElementById('mqtt-watchdog-timeout').value = d.broker_watchdog_timeout_seconds || 300;
+      var watchdogTarget = document.getElementById('mqtt-watchdog-target');
+      watchdogTarget.innerHTML = '<option value="">— select a saved WOL device —</option>';
+      (wolDevices || []).forEach(function (device) {
+        var option = document.createElement('option');
+        option.value = device.mac || '';
+        option.textContent = (device.name || device.mac || 'device') + ' · ' + (device.mac || '');
+        watchdogTarget.appendChild(option);
+      });
+      if (d.broker_watchdog_wol_mac
+          && !Array.from(watchdogTarget.options).some(function (o) { return o.value === d.broker_watchdog_wol_mac; })) {
+        var missing = document.createElement('option');
+        missing.value = d.broker_watchdog_wol_mac;
+        missing.textContent = 'Missing saved device · ' + d.broker_watchdog_wol_mac;
+        watchdogTarget.appendChild(missing);
+      }
+      watchdogTarget.value = d.broker_watchdog_wol_mac || '';
+      document.getElementById('mqtt-watchdog-status').textContent = d.broker_watchdog_triggered
+        ? 'Triggered for this outage · successful wake count: ' + (d.broker_watchdog_wake_count || 0)
+        : (d.enabled && !d.connected
+            ? 'Broker silent for ' + (d.broker_silence_seconds || 0) + ' s · wake count: ' + (d.broker_watchdog_wake_count || 0)
+            : 'Armed after each successful MQTT connection · wake count: ' + (d.broker_watchdog_wake_count || 0));
       var topic = d.base_topic || '…';
       document.getElementById('mqtt-topics-help').textContent =
         'State: ' + topic + '/state · commands: ' + topic + '/command/#';
@@ -6383,17 +6226,18 @@
     }
 
     function loadMqtt() {
-      apiFetch('/api/mqtt').then(function (r) {
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.json();
-      }).then(renderMqttState).catch(function () {
+      Promise.all([
+        apiFetch('/api/mqtt').then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }),
+        apiFetch('/api/wol').then(function (r) { return r.ok ? r.json() : { devices: [] }; })
+      ]).then(function (parts) { renderMqttState(parts[0], (parts[1] && parts[1].devices) || []); }).catch(function () {
         var badge = document.getElementById('mqtt-badge');
         badge.className = 'badge badge-danger'; badge.textContent = 'Unavailable';
       });
     }
 
     ['mqtt-enabled', 'mqtt-uri', 'mqtt-topic', 'mqtt-user', 'mqtt-password',
-     'mqtt-password-clear', 'mqtt-interval', 'mqtt-ha-enabled', 'mqtt-ha-prefix'].forEach(function (id) {
+     'mqtt-password-clear', 'mqtt-interval', 'mqtt-ha-enabled', 'mqtt-ha-prefix',
+     'mqtt-watchdog-enabled', 'mqtt-watchdog-timeout', 'mqtt-watchdog-target'].forEach(function (id) {
       var element = document.getElementById(id);
       element.addEventListener(element.type === 'checkbox' ? 'change' : 'input', function () {
         document.getElementById('mqtt-save').disabled = false;
@@ -6420,7 +6264,10 @@
         interval_seconds: parseInt(document.getElementById('mqtt-interval').value, 10),
         home_assistant_discovery: document.getElementById('mqtt-ha-enabled').checked,
         discovery_prefix: document.getElementById('mqtt-ha-prefix').value.trim().replace(/\/+$/, ''),
-        clear_password: document.getElementById('mqtt-password-clear').checked
+        clear_password: document.getElementById('mqtt-password-clear').checked,
+        broker_watchdog_enabled: document.getElementById('mqtt-watchdog-enabled').checked,
+        broker_watchdog_timeout_seconds: parseInt(document.getElementById('mqtt-watchdog-timeout').value, 10),
+        broker_watchdog_wol_mac: document.getElementById('mqtt-watchdog-target').value
       };
       var password = document.getElementById('mqtt-password').value;
       if (password) body.password = password;
@@ -6434,6 +6281,14 @@
       }
       if (!(body.interval_seconds >= 5 && body.interval_seconds <= 3600)) {
         showToast('error', 'Invalid interval', 'Use 5–3600 seconds.', 5000);
+        return;
+      }
+      if (!(body.broker_watchdog_timeout_seconds >= 30 && body.broker_watchdog_timeout_seconds <= 86400)) {
+        showToast('error', 'Invalid watchdog timeout', 'Use 30–86400 seconds.', 5000);
+        return;
+      }
+      if (body.broker_watchdog_enabled && (!body.enabled || !body.broker_watchdog_wol_mac)) {
+        showToast('error', 'Watchdog needs MQTT + WOL', 'Enable MQTT and select a saved WOL device.', 5000);
         return;
       }
       btn.disabled = true; btn.textContent = 'Saving…';
@@ -6506,12 +6361,7 @@
           if (ab1) ab1.textContent = d.version || '—';
           if (ab2) { ab2.textContent = buildTag; ab2.title = builtStr; }
 
-          var tlm = d.telemetry || {};
-          document.getElementById('sys-dh').textContent = tlm.device_hash || '—';
-          var atog = document.getElementById('about-tlm-enabled');
-          var ast  = document.getElementById('about-tlm-state');
-          if (atog) { atog.checked = !!tlm.enabled; atog.disabled = false; }
-          if (ast)  ast.textContent = tlm.enabled ? 'On' : 'Off';
+          document.getElementById('sys-ota-running').textContent = d.version || '—';
 
           /* SD flight-recorder card refreshes on every System-tab load. */
           if (typeof loadSdlog === 'function') loadSdlog();
@@ -6540,111 +6390,9 @@
            * timeout length may have been changed by another tab. */
           sessionCountdownConfig(d.session_timeout_s, d.session_remaining_s);
 
-          /* OTA card — render the poller state + last check. */
-          renderOtaState(d.ota || {});
-
           /* Reset history table — last 10 boots, hist[0] is current. */
           renderResetHistory(d.reset_history || []);
         }).catch(function () {});
-    }
-
-    /* Populate the install-hour <select> with 00:00..23:00 entries
-     * once at DOM load. Done lazily so we only touch the element once. */
-    (function () {
-      var sel = document.getElementById('sys-ota-hour');
-      if (!sel) return;
-      for (var h = 0; h < 24; h++) {
-        var o = document.createElement('option');
-        o.value = String(h);
-        o.textContent = (h < 10 ? '0' : '') + h + ':00';
-        sel.appendChild(o);
-      }
-    })();
-
-    /* Release notes are fetched live from GitHub by the BROWSER, on demand
-     * (only when the operator opens the disclosure) — nothing is stored on
-     * the device. Shows every release newer than the running firmware. */
-    var _otaRunningVer = '';
-    function _verParts(v) {
-      if (!v) return null;
-      var m = String(v).trim().replace(/^v/i, '').match(/^(\d+)\.(\d+)\.(\d+)(.*)$/);
-      if (!m) return null;
-      return { n: [ +m[1], +m[2], +m[3] ], pre: !!(m[4] && m[4][0] === '-') };
-    }
-    function _verNewer(a, b) {           /* is release tag a newer than running b? */
-      var pa = _verParts(a), pb = _verParts(b);
-      if (!pa) return false;
-      if (!pb) return true;
-      for (var i = 0; i < 3; i++) { if (pa.n[i] !== pb.n[i]) return pa.n[i] > pb.n[i]; }
-      return (pb.pre && !pa.pre);        /* same x.y.z: a real release beats a -pre build */
-    }
-    function loadReleaseNotes() {
-      var el = document.getElementById('sys-ota-notes');
-      if (!el) return;
-      el.textContent = 'Loading from GitHub…';
-      fetch('https://api.github.com/repos/Csontikka/esp32-tailscale-subnet-router/releases', { cache: 'no-store' })
-        .then(function (r) {
-          if (r.status === 403) throw new Error('rate-limited');
-          if (!r.ok) throw new Error('HTTP ' + r.status);
-          return r.json();
-        })
-        .then(function (rels) {
-          if (!Array.isArray(rels) || !rels.length) { el.textContent = '— no releases published yet —'; return; }
-          var newer = rels.filter(function (rl) { return !rl.draft && _verNewer(rl.tag_name, _otaRunningVer); });
-          if (!newer.length) { el.textContent = "You're on the latest release (" + (_otaRunningVer || '?') + ').'; return; }
-          newer.sort(function (a, b) { return (b.published_at || '').localeCompare(a.published_at || ''); });
-          el.textContent = newer.map(function (rl) {
-            var head = (rl.name || rl.tag_name) + (rl.published_at ? '  (' + rl.published_at.slice(0, 10) + ')' : '');
-            return head + '\n' + Array(Math.min(head.length, 44) + 1).join('─') + '\n' + (rl.body || '(no description)').trim();
-          }).join('\n\n');
-        })
-        .catch(function (e) {
-          el.textContent = (e && e.message === 'rate-limited')
-            ? '— GitHub rate limit hit, try again later —'
-            : "— couldn't reach GitHub (offline?) —";
-        });
-    }
-    (function () {   /* lazy: fetch only when the disclosure is opened */
-      var wrap = document.getElementById('sys-ota-notes-wrap');
-      if (wrap) wrap.addEventListener('toggle', function () { if (wrap.open) loadReleaseNotes(); });
-    })();
-
-    function renderOtaState(o) {
-      var auto  = document.getElementById('sys-ota-auto');
-      var hour  = document.getElementById('sys-ota-hour');
-      var hourWrap = document.getElementById('sys-ota-hour-wrap');
-      var last  = document.getElementById('sys-ota-last');
-      var stat  = document.getElementById('sys-ota-status');
-      var run   = document.getElementById('sys-ota-running');
-      var lat   = document.getElementById('sys-ota-latest');
-      var lver  = document.getElementById('sys-ota-last-ver');
-      var badge = document.getElementById('sys-ota-badge');
-      var inst  = document.getElementById('sys-ota-install');
-
-      auto.checked = !!o.auto_install;
-      var beta = document.getElementById('sys-ota-beta');
-      if (beta) beta.checked = !!o.beta_channel;
-      hour.value   = String(o.install_hour != null ? o.install_hour : -1);
-      /* The hour select only matters when auto-install is on. */
-      hourWrap.style.opacity = auto.checked ? '1' : '0.45';
-      last.textContent = _fmtWallclock(o.last_check);
-      stat.textContent = o.last_status || '—';
-      run.textContent  = o.running_version || '—';
-      lat.textContent  = o.last_version    || '—';
-      _otaRunningVer = o.running_version || '';   /* for the lazy GitHub notes fetch */
-
-      if (o.update_available) {
-        badge.className = 'badge badge-warning';
-        badge.textContent = 'update available';
-        inst.disabled = false;
-        lver.textContent = 'Update available: ' + (o.last_version || '?');
-      } else {
-        badge.className = o.auto_install ? 'badge badge-success' : 'badge badge-neutral';
-        badge.textContent = o.auto_install ? 'Auto-install on' : 'Manual install';
-        inst.disabled = true;
-        lver.textContent = '';
-      }
-      document.getElementById('sys-ota-save').disabled = true;
     }
 
     function _resetReasonClass(reason) {
@@ -6703,70 +6451,9 @@
       el.textContent = '≈ ' + (v * 0.25).toFixed(2) + ' dBm';
     }
 
-    /* OTA card wiring — auto-install + install-hour save, "Check now"
-     * trigger, "Install now" trigger, manual upload via XHR. */
-    ['sys-ota-auto', 'sys-ota-beta', 'sys-ota-hour'].forEach(function (id) {
-      document.getElementById(id).addEventListener('change', function () {
-        document.getElementById('sys-ota-save').disabled = false;
-        /* live-toggle the hour-select dim when auto flips */
-        if (id === 'sys-ota-auto') {
-          document.getElementById('sys-ota-hour-wrap').style.opacity =
-            document.getElementById('sys-ota-auto').checked ? '1' : '0.45';
-        }
-      });
-    });
+    /* Manual OTA upload only: the ESP32 never polls or downloads firmware. */
     document.getElementById('sys-ota-file').addEventListener('change', function () {
       document.getElementById('sys-ota-upload').disabled = !(this.files && this.files[0]);
-    });
-    document.getElementById('sys-ota-save').addEventListener('click', function () {
-      var btn = this; btn.disabled = true; btn.textContent = 'Saving…';
-      apiFetch('/api/system', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          ota: {
-            auto_install: document.getElementById('sys-ota-auto').checked,
-            beta:         document.getElementById('sys-ota-beta').checked,
-            install_hour: parseInt(document.getElementById('sys-ota-hour').value, 10)
-          }
-        })
-      }).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); })
-        .then(function () { btn.textContent = 'Save'; showToast('success', 'Saved', 'OTA settings written.', 4000); loadSystem(); })
-        .catch(function (e) { btn.disabled = false; btn.textContent = 'Save'; showToast('error', 'Save failed', e.message || '', 5000); });
-    });
-    document.getElementById('sys-ota-install').addEventListener('click', function () {
-      var lat = (document.getElementById('sys-ota-latest').textContent || '').trim();
-      if (!confirm('Install ' + (lat || 'the new firmware') + ' now and reboot?')) return;
-      var btn = this; btn.disabled = true; btn.textContent = 'Installing…';
-      apiFetch('/api/system/ota/install', { method: 'POST' })
-        .then(function (r) { return r.json(); })
-        .then(function (d) {
-          if (d.ok) {
-            showToast('success', 'Install started',
-                      'Downloading + flashing, then the device will reboot. Refresh in ~30 s.', 8000);
-          } else {
-            btn.disabled = false; btn.textContent = 'Install now';
-            showToast('error', 'Install failed', d.reason || 'unknown', 6000);
-          }
-        })
-        .catch(function () {
-          btn.disabled = false; btn.textContent = 'Install now';
-          showToast('error', 'Install failed', '', 5000);
-        });
-    });
-    document.getElementById('sys-ota-check').addEventListener('click', function () {
-      var btn = this; btn.disabled = true; btn.textContent = 'Checking…';
-      apiFetch('/api/system/ota/poll', { method: 'POST' })
-        .then(function (r) { return r.json(); })
-        .then(function (d) {
-          btn.disabled = false; btn.textContent = 'Check now';
-          showToast('info', 'Result', d.status || 'done', 6000);
-          loadSystem();
-        })
-        .catch(function () {
-          btn.disabled = false; btn.textContent = 'Check now';
-          showToast('error', 'Check failed', '', 5000);
-        });
     });
     document.getElementById('sys-ota-upload').addEventListener('click', function () {
       var f = document.getElementById('sys-ota-file').files[0];
@@ -7016,19 +6703,15 @@
         delete sys.log_tail;
         delete sys.reset_history;
         delete sys.session_remaining_s;
-        if (sys.telemetry) {
-          delete sys.telemetry.last_send_ms;
-          delete sys.telemetry.last_status;
-          delete sys.telemetry.device_hash;
-          delete sys.telemetry.boot_count;
-          delete sys.telemetry.flash_count;
-        }
         var ts = parts[4] || {};
         delete ts.peers;
         delete ts.runtime;
         var mqtt = parts[7] || {};
         delete mqtt.connected;
         delete mqtt.has_password;
+        delete mqtt.broker_watchdog_triggered;
+        delete mqtt.broker_watchdog_wake_count;
+        delete mqtt.broker_silence_seconds;
         var backup = {
           format:        'tsr-backup-v1',
           exported_at:   new Date().toISOString(),
@@ -7159,9 +6842,6 @@
         if (typeof data.system.device_name === 'string') sb.device_name = data.system.device_name;
         if (typeof data.system.tz          === 'string') sb.tz          = data.system.tz;
         if (typeof data.system.tx_power_nvs === 'number') sb.tx_power = data.system.tx_power_nvs;
-        if (data.system.telemetry && typeof data.system.telemetry.enabled === 'boolean') {
-          sb.telemetry = { enabled: data.system.telemetry.enabled };
-        }
         if (Object.keys(sb).length) steps.push({ name: 'system', url: '/api/system', body: sb });
       }
       if (data.tailscale && data.tailscale.settings) {
@@ -7272,50 +6952,6 @@
         })
         .catch(function () { btn.disabled = false; showToast('error', 'Save failed', '', 5000); });
     });
-
-    /* Telemetry toggle lives in the About card. On by default; turning it
-     * ON applies immediately, turning it OFF asks first (it's the only
-     * signal the maintainer gets — see the README Telemetry section). */
-    (function () {
-      var atog = document.getElementById('about-tlm-enabled');
-      if (!atog) return;
-
-      function applyTelemetry(on) {
-        var st = document.getElementById('about-tlm-state');
-        atog.disabled = true;
-        apiFetch('/api/system', {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ telemetry: { enabled: on } })
-        })
-          .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-          .then(function () {
-            atog.checked = on;
-            if (st) st.textContent = on ? 'On' : 'Off';
-            showToast('success', 'Telemetry ' + (on ? 'enabled' : 'disabled'), '', 3000);
-          })
-          .catch(function () {
-            atog.checked = !on;
-            showToast('error', 'Save failed', '', 5000);
-          })
-          .finally(function () { atog.disabled = false; });
-      }
-
-      atog.addEventListener('change', function () {
-        if (this.checked) { applyTelemetry(true); return; }   // ON: no prompt
-        /* OFF: keep the toggle visually on until the operator confirms. */
-        this.checked = true;
-        showConfirm(
-          'Turn off anonymous telemetry?',
-            '<p style="margin:0 0 0.6rem 0;">It is completely anonymous — a salted one-way device hash + boot/flash counters + firmware version, at most once a day. <strong>Never SSIDs, IPs, MAC addresses, the tailnet name, or peers.</strong></p>'
-          + '<p style="margin:0 0 0.6rem 0;">Honestly, it is the only way I can spot a <strong>mass crash</strong> after a bad release, and the only hint of whether anyone actually runs this free hobby project. <strong>If you can, please leave it on</strong> — but it is entirely your call.</p>'
-          + '<p style="margin:0;"><a href="https://github.com/Csontikka/esp32-tailscale-subnet-router#telemetry" target="_blank" rel="noopener" style="color:var(--accent);">Exactly what it sends &rarr;</a></p>',
-          function () { applyTelemetry(false); },
-          { html: true, confirmText: 'Turn it off anyway', cancelText: 'Keep it on', danger: true }
-        );
-      });
-    })();
-
 
     /* ===== SD flight-recorder ===== */
     var sdlogState = { present: false, enabled: false };
@@ -7560,7 +7196,7 @@
     });
     document.getElementById('sys-factory-btn').addEventListener('click', function () {
       showConfirm('Factory reset?',
-                  '<p style="margin:0 0 0.6rem 0;">This will <strong>ERASE ALL settings</strong> — WiFi, Tailscale, ACL, telemetry, password. The device will reboot into the first-boot wizard. <strong>This cannot be undone.</strong></p>'
+                  '<p style="margin:0 0 0.6rem 0;">This will <strong>ERASE ALL settings</strong> — WiFi, Tailscale, ACL, MQTT/WOL, password. The device will reboot into the first-boot wizard. <strong>This cannot be undone.</strong></p>'
                   + '<div style="margin:0; padding:0.55rem 0.7rem; background:var(--bg-elevated); border:1px solid var(--border); border-left:3px solid var(--warning,#f5a623); border-radius:4px; font-size:var(--text-sm);">'
                   + '⚠ <strong>Highly recommended:</strong> download an encrypted config backup first — it is your only way to restore. '
                   + '<a href="#" id="factory-backup-link" style="color:var(--accent); white-space:nowrap;">Back up first&nbsp;&rarr;</a>'

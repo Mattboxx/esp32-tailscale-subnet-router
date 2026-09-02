@@ -32,6 +32,9 @@ static esp_mqtt_client_handle_t s_client;
 static volatile bool s_connected;
 static volatile bool s_publish_requested;
 static volatile bool s_discovery_requested;
+static volatile bool s_watchdog_triggered;
+static volatile uint32_t s_watchdog_wake_count;
+static volatile int64_t s_last_broker_ok_us;
 static char s_device_id[24];
 static char s_availability_topic[128];
 static char s_state_topic[128];
@@ -44,6 +47,7 @@ static void config_defaults(mqtt_integration_config_t *config)
 {
     memset(config, 0, sizeof *config);
     config->interval_seconds = 30;
+    config->broker_watchdog_timeout_seconds = 300;
     strlcpy(config->discovery_prefix, "homeassistant", sizeof config->discovery_prefix);
     uint8_t mac[6] = {0};
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
@@ -76,6 +80,14 @@ static void load_config(void)
     load_string("mqtt_pass", s_config.password, sizeof s_config.password);
     load_string("mqtt_topic", s_config.base_topic, sizeof s_config.base_topic);
     load_string("mqtt_hapfx", s_config.discovery_prefix, sizeof s_config.discovery_prefix);
+    load_string("mqtt_wmac", s_config.broker_watchdog_wol_mac,
+                sizeof s_config.broker_watchdog_wol_mac);
+    if (nvs_param_get_u8("mqtt_wdog", &flag) == ESP_OK)
+        s_config.broker_watchdog_enabled = flag != 0;
+    uint32_t watchdog_timeout = 0;
+    if (nvs_param_get_u32("mqtt_wdto", &watchdog_timeout) == ESP_OK
+        && watchdog_timeout >= 30 && watchdog_timeout <= 86400)
+        s_config.broker_watchdog_timeout_seconds = watchdog_timeout;
 }
 
 static int publish(const char *topic, const char *payload, int retain)
@@ -116,6 +128,8 @@ static void discovery_publish_entity(const char *domain, const char *object_id,
     if (command_topic) cJSON_AddStringToObject(root, "command_topic", command_topic);
     if (device_class) cJSON_AddStringToObject(root, "device_class", device_class);
     if (unit) cJSON_AddStringToObject(root, "unit_of_measurement", unit);
+    if (strcmp(domain, "sensor") == 0 || strcmp(domain, "binary_sensor") == 0)
+        cJSON_AddStringToObject(root, "entity_category", "diagnostic");
     cJSON_AddStringToObject(root, "availability_topic", s_availability_topic);
     cJSON_AddStringToObject(root, "payload_available", "online");
     cJSON_AddStringToObject(root, "payload_not_available", "offline");
@@ -155,6 +169,15 @@ static void publish_discovery(void)
                              "{{ value_json.tailscale_ip }}", NULL, NULL, NULL);
     discovery_publish_entity("sensor", "free_heap", "Free heap", s_state_topic,
                              "{{ value_json.free_heap }}", NULL, NULL, "B");
+    discovery_publish_entity("sensor", "uptime", "Uptime", s_state_topic,
+                             "{{ value_json.uptime_seconds }}", NULL, "duration", "s");
+    discovery_publish_entity("binary_sensor", "access_point", "Access point", s_state_topic,
+                             "{{ value_json.ap_enabled }}", NULL, "connectivity", NULL);
+    discovery_publish_entity("sensor", "ap_clients", "AP clients", s_state_topic,
+                             "{{ value_json.ap_clients }}", NULL, NULL, NULL);
+    discovery_publish_entity("sensor", "mqtt_watchdog_wakes", "MQTT watchdog wakes",
+                             s_state_topic, "{{ value_json.mqtt_watchdog_wake_count }}",
+                             NULL, NULL, NULL);
 
     snprintf(command, sizeof command, "%s/command/ap_always_on", cfg.base_topic);
     discovery_publish_entity("switch", "ap_always_on", "Access point always on",
@@ -176,7 +199,7 @@ static void publish_discovery(void)
         char name[64];
         snprintf(name, sizeof name, "Wake %s", device.name[0] ? device.name : mac);
         discovery_publish_entity("button", object_id, name, NULL, NULL, command,
-                                 "restart", NULL);
+                                 NULL, NULL);
     }
     ESP_LOGI(TAG, "Home Assistant discovery published (%d WOL button(s))", count);
 }
@@ -224,6 +247,11 @@ static void publish_state(void)
     cJSON_AddNumberToObject(root, "ap_clients", client_count);
     cJSON_AddNumberToObject(root, "uptime_seconds", esp_timer_get_time() / 1000000ULL);
     cJSON_AddNumberToObject(root, "free_heap", esp_get_free_heap_size());
+    cJSON_AddStringToObject(root, "mqtt_watchdog_triggered",
+                            s_watchdog_triggered ? "ON" : "OFF");
+    cJSON_AddNumberToObject(root, "mqtt_watchdog_wake_count", s_watchdog_wake_count);
+    cJSON_AddNumberToObject(root, "broker_silence_seconds",
+                            mqtt_integration_broker_silence_seconds());
 
     char *json = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
@@ -287,6 +315,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
     esp_mqtt_event_handle_t event = event_data;
     if (event_id == MQTT_EVENT_CONNECTED) {
         s_connected = true;
+        s_last_broker_ok_us = esp_timer_get_time();
+        s_watchdog_triggered = false;
         mqtt_integration_config_t cfg;
         mqtt_integration_get_config(&cfg);
         char command_topic[128];
@@ -298,6 +328,9 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
         ESP_LOGI(TAG, "connected; subscribed to %s", command_topic);
     } else if (event_id == MQTT_EVENT_DISCONNECTED) {
         s_connected = false;
+        /* The watchdog timeout starts when a previously responsive broker
+         * disappears, not at the older connection timestamp. */
+        s_last_broker_ok_us = esp_timer_get_time();
         ESP_LOGW(TAG, "disconnected");
     } else if (event_id == MQTT_EVENT_DATA) {
         if (event->current_data_offset != 0 || event->data_len != event->total_data_len
@@ -328,6 +361,8 @@ static void start_client(void)
     mqtt_integration_config_t cfg;
     mqtt_integration_get_config(&cfg);
     if (!cfg.enabled || !cfg.uri[0] || !cfg.base_topic[0]) return;
+    s_last_broker_ok_us = esp_timer_get_time();
+    s_watchdog_triggered = false;
     snprintf(s_availability_topic, sizeof s_availability_topic, "%s/availability", cfg.base_topic);
     snprintf(s_state_topic, sizeof s_state_topic, "%s/state", cfg.base_topic);
     const esp_mqtt_client_config_t client_config = {
@@ -384,6 +419,23 @@ static void manager_task(void *arg)
             s_discovery_requested = false;
             publish_discovery();
         }
+        if (!s_connected && cfg.enabled && cfg.broker_watchdog_enabled
+            && cfg.broker_watchdog_wol_mac[0] && !s_watchdog_triggered) {
+            int64_t silence_us = esp_timer_get_time() - s_last_broker_ok_us;
+            if (silence_us >= (int64_t)cfg.broker_watchdog_timeout_seconds * 1000000LL) {
+                esp_err_t wake_err = wol_send_saved_mac_text(cfg.broker_watchdog_wol_mac);
+                s_watchdog_triggered = true; /* one three-packet burst per outage */
+                if (wake_err == ESP_OK) {
+                    s_watchdog_wake_count++;
+                    ESP_LOGW(TAG, "broker silent for %lu s; watchdog WOL sent to %s",
+                             (unsigned long)cfg.broker_watchdog_timeout_seconds,
+                             cfg.broker_watchdog_wol_mac);
+                } else {
+                    ESP_LOGE(TAG, "broker watchdog WOL failed for %s: %s",
+                             cfg.broker_watchdog_wol_mac, esp_err_to_name(wake_err));
+                }
+            }
+        }
     }
 }
 
@@ -415,6 +467,13 @@ esp_err_t mqtt_integration_set_config(const mqtt_integration_config_t *config)
         return ESP_ERR_INVALID_ARG;
     if (config->enabled && (!config->uri[0] || !config->base_topic[0]))
         return ESP_ERR_INVALID_ARG;
+    uint8_t watchdog_mac[6];
+    if (config->broker_watchdog_timeout_seconds < 30
+        || config->broker_watchdog_timeout_seconds > 86400
+        || (config->broker_watchdog_enabled
+            && (!config->enabled
+                || !wol_parse_mac(config->broker_watchdog_wol_mac, watchdog_mac))))
+        return ESP_ERR_INVALID_ARG;
     esp_err_t err = nvs_param_set_u8("mqtt_en", config->enabled ? 1 : 0);
 #define SAVE_STR(key, field) do { if (err == ESP_OK) err = nvs_param_set_str((key), (field)); } while (0)
     SAVE_STR("mqtt_uri", config->uri);
@@ -422,9 +481,12 @@ esp_err_t mqtt_integration_set_config(const mqtt_integration_config_t *config)
     SAVE_STR("mqtt_pass", config->password);
     SAVE_STR("mqtt_topic", config->base_topic);
     SAVE_STR("mqtt_hapfx", config->discovery_prefix);
+    SAVE_STR("mqtt_wmac", config->broker_watchdog_wol_mac);
 #undef SAVE_STR
     if (err == ESP_OK) err = nvs_param_set_u8("mqtt_ha", config->home_assistant_discovery ? 1 : 0);
     if (err == ESP_OK) err = nvs_param_set_u16("mqtt_int", config->interval_seconds);
+    if (err == ESP_OK) err = nvs_param_set_u8("mqtt_wdog", config->broker_watchdog_enabled ? 1 : 0);
+    if (err == ESP_OK) err = nvs_param_set_u32("mqtt_wdto", config->broker_watchdog_timeout_seconds);
     if (err != ESP_OK) return err;
     xSemaphoreTake(s_lock, portMAX_DELAY);
     memcpy(&s_config, config, sizeof s_config);
@@ -436,6 +498,23 @@ esp_err_t mqtt_integration_set_config(const mqtt_integration_config_t *config)
 bool mqtt_integration_connected(void)
 {
     return s_connected;
+}
+
+bool mqtt_integration_watchdog_triggered(void)
+{
+    return s_watchdog_triggered;
+}
+
+uint32_t mqtt_integration_watchdog_wake_count(void)
+{
+    return s_watchdog_wake_count;
+}
+
+uint32_t mqtt_integration_broker_silence_seconds(void)
+{
+    if (s_connected || s_last_broker_ok_us == 0) return 0;
+    int64_t elapsed = esp_timer_get_time() - s_last_broker_ok_us;
+    return elapsed > 0 ? (uint32_t)(elapsed / 1000000LL) : 0;
 }
 
 void mqtt_integration_publish_now(void)

@@ -38,7 +38,6 @@
 
 #include "tailscale_config.h"
 #include "tailscale_mtu.h"
-#include "telemetry.h"
 #include "lwip_route_hook.h"
 #include "web_ui.h"
 #include "acl.h"
@@ -114,9 +113,8 @@ static int s_retry_num = 0;
 static EventGroupHandle_t s_wifi_event_group;
 
 /* Cross-module state. ap_connect tracks whether the upstream STA link
- * is up (telemetry waits for it before its first send); connect_count
- * is the live count of AP clients (rendered on the Status page and
- * reported in telemetry). */
+ * is up; connect_count is the live count of AP clients rendered on the
+ * Status page and published to the operator-configured MQTT broker. */
 int ap_connect   = 0;
 int connect_count = 0;
 
@@ -736,14 +734,10 @@ void softap_set_dns_addr(esp_netif_t *esp_netif_ap,esp_netif_t *esp_netif_sta)
 {
     /* Choose the DNS we hand out to AP clients via DHCP Option 6:
      *   0. DNS relay ON → we are the resolver — hand out our own AP IP.
-     *   1. NVS "ap_dns" if the operator set a custom one (e.g. 1.1.1.1
-     *      to bypass the upstream router's resolver).
+     *   1. NVS "ap_dns" if the operator set a custom resolver.
      *   2. Otherwise mirror whatever the STA learned upstream, which is
      *      what the AP DHCP server traditionally did.
-     *   3. Final fallback 1.1.1.1 so clients never cache the AP IP as a
-     *      "DNS server" by accident when neither STA nor override is set
-     *      (boot-time window — the old repo had this constant, the new
-     *      one regressed without it). */
+     * No hard-coded public resolver is used. */
     esp_netif_dns_info_t dns = {0};
     bool used_override = false;
     if (dns_relay_is_enabled() && dns_relay_is_healthy()) {
@@ -770,13 +764,6 @@ void softap_set_dns_addr(esp_netif_t *esp_netif_ap,esp_netif_t *esp_netif_sta)
     if (!used_override) {
         esp_netif_get_dns_info(esp_netif_sta, ESP_NETIF_DNS_MAIN, &dns);
     }
-    if (dns.ip.u_addr.ip4.addr == 0) {
-        ip4_addr_t a;
-        ip4addr_aton("1.1.1.1", &a);
-        dns.ip.type = ESP_IPADDR_TYPE_V4;
-        dns.ip.u_addr.ip4.addr = a.addr;
-    }
-
     uint8_t dhcps_offer_option = DHCPS_OFFER_DNS;
     ESP_ERROR_CHECK_WITHOUT_ABORT(esp_netif_dhcps_stop(esp_netif_ap));
     ESP_ERROR_CHECK(esp_netif_dhcps_option(esp_netif_ap, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER, &dhcps_offer_option, sizeof(dhcps_offer_option)));
@@ -798,6 +785,29 @@ void softap_set_dns_addr(esp_netif_t *esp_netif_ap,esp_netif_t *esp_netif_sta)
  * (e.g. "ch-realign 11->1"). Empty when the reset wasn't one we tagged. */
 char g_reboot_why[32] = {0};
 
+/* One-time privacy migration for devices upgraded from the original build.
+ * The code that used these settings no longer exists; erase the dormant URL,
+ * key, counters and update-poller preferences so a backup cannot resurrect
+ * them later. Keep local reset/crash history because Diagnostics still uses it. */
+static void remove_legacy_outbound_settings(void)
+{
+    uint8_t migrated = 0;
+    if (nvs_param_get_u8("privacy_v1", &migrated) == ESP_OK && migrated == 1) return;
+    static const char *const keys[] = {
+        "tm_enabled", "tm_url", "tm_key", "tm_boot_cnt", "tm_flash_cnt",
+        "tm_ban_ver", "ota_auto_in", "ota_auto_en", "ota_inst_h",
+        "ota_beta", "ota_last_check", "ota_last_ver",
+    };
+    for (size_t i = 0; i < sizeof keys / sizeof keys[0]; i++) {
+        esp_err_t err = nvs_param_erase(keys[i]);
+        if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND)
+            ESP_LOGW("privacy", "could not erase legacy key %s: %s",
+                     keys[i], esp_err_to_name(err));
+    }
+    ESP_ERROR_CHECK_WITHOUT_ABORT(nvs_param_set_u8("privacy_v1", 1));
+    ESP_LOGI("privacy", "legacy telemetry and automatic-update settings removed");
+}
+
 void app_main(void)
 {
     ESP_ERROR_CHECK(esp_netif_init());
@@ -810,6 +820,7 @@ void app_main(void)
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+    remove_legacy_outbound_settings();
 
     /* Install the ESP_LOG ring buffer + RTC-NOINIT pre-crash buffer as
      * early as possible so the boot-time output is recoverable from
@@ -831,10 +842,9 @@ void app_main(void)
     dns_relay_set_state_cb(dns_relay_state_cb);
 
     /* If a core dump was saved on the previous boot, extract a one-line
-     * summary (task name + PC + first backtrace frames) and persist it
-     * to NVS so the telemetry "CRASH" column has something to send.
-     * Erase the coredump after reading so the next panic gets a fresh
-     * slot — the partition only ever holds the latest dump. */
+     * summary (task name + PC + first backtrace frames) for the local
+     * Diagnostics page. Erase it after reading so the next panic gets a
+     * fresh slot — the partition only ever holds the latest dump. */
     if (esp_core_dump_image_check() == ESP_OK) {
         esp_core_dump_summary_t *sum = malloc(sizeof(*sum));
         if (sum && esp_core_dump_get_summary(sum) == ESP_OK) {
@@ -843,7 +853,7 @@ void app_main(void)
              * check) ALWAYS starts panic_abort -> esp_system_abort -> abort,
              * so the first 3 frames are identical for every such crash — the
              * real culprit is deeper. Record up to 10 frames in a loop so the
-             * signature is actually debuggable from Diagnostics + telemetry. */
+             * signature is actually debuggable from local Diagnostics. */
             char crash_info[256];
             const uint32_t *bt = sum->exc_bt_info.bt;
             int bt_n = sum->exc_bt_info.depth;
@@ -888,11 +898,6 @@ void app_main(void)
      * hook clamp values. Loads NVS now; the 30 s poll timer takes over
      * once microlink + the wg netif exist. */
     tailscale_mtu_init();
-
-    /* Anonymous telemetry — privacy-respecting flash/boot/heartbeat
-     * reporter. Spawns a low-priority task that waits for ap_connect
-     * before its first send. */
-    telemetry_init();
 
     /* Exit-node default-route supervisor. Background task flips
      * netif_default between STA and the WireGuard netif depending on
@@ -1055,12 +1060,6 @@ void app_main(void)
      * (lock-free) to decide whether to deauth the freshly-associated
      * station before it gets anywhere. */
     mac_deny_init();
-
-    /* OTA — manual web upload handler + (optionally) the GitHub poller.
-     * Init must precede web_ui so the handler is ready when the server
-     * starts; the poller task self-paces with a 20 s settle delay so
-     * it doesn't fight the boot-time WiFi bring-up. */
-    ota_init();
 
     /* HTTP server with the embedded SPA at / + the JSON API endpoints. */
     web_ui_init();

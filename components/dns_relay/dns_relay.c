@@ -65,8 +65,6 @@
 #define KEY_ENABLED             "dns_relay_en"
 #define KEY_UPSTREAM            "dns_relay_up"
 
-#define DEFAULT_FALLBACK_UPSTREAM 0x01010101UL  /* 1.1.1.1, network order written below. */
-
 static const char *TAG = "dns_relay";
 
 static volatile bool     s_enabled       = false;
@@ -112,8 +110,9 @@ static SemaphoreHandle_t  s_cache_mtx = NULL;
  * which is irrelevant — the cache *data* is what the mutex protects. */
 static volatile uint32_t st_queries, st_hits, st_misses, st_inserts, st_evictions;
 
-/* Resolve the live upstream IP every forward. Priority: explicit override,
- * then STA-learned DNS, then 1.1.1.1 (so we never serve garbage). */
+/* Resolve the live upstream IP every forward. Priority: explicit operator
+ * override, then DNS learned from the STA DHCP lease. No public resolver is
+ * contacted unless the operator or upstream DHCP server selected it. */
 static uint32_t pick_upstream(void)
 {
     if (s_upstream_nbo) return s_upstream_nbo;
@@ -125,7 +124,7 @@ static uint32_t pick_upstream(void)
             if (a != 0) return a;
         }
     }
-    return PP_HTONL(DEFAULT_FALLBACK_UPSTREAM);
+    return 0;
 }
 
 /* Open + bind the listening socket. Returns the fd or -1. */
@@ -299,10 +298,16 @@ static void worker_task(void *arg)
         }
         if (up < 0) { heap_caps_free(w); continue; }
 
+        uint32_t upstream = pick_upstream();
+        if (upstream == 0) {
+            ESP_LOGW(TAG, "no upstream DNS available; dropping query");
+            heap_caps_free(w);
+            continue;
+        }
         struct sockaddr_in up_addr = {
             .sin_family = AF_INET,
             .sin_port   = htons(DNS_RELAY_PORT),
-            .sin_addr.s_addr = pick_upstream(),
+            .sin_addr.s_addr = upstream,
         };
         int sent = -1;
         for (int attempt = 0; attempt < DNS_RELAY_TX_RETRIES; attempt++) {

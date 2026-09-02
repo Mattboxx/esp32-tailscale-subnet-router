@@ -36,7 +36,6 @@ idf_component_register(SRCS "main.c"
                             "nvs_params.c"
                             "tailscale_manager.c"
                             "tailscale_mtu.c"
-                            "telemetry.c"
                             "lwip_route_hook.c"
                             "web_ui.c"
                             "netif_hooks.c"
@@ -51,12 +50,12 @@ idf_component_register(SRCS "main.c"
                             "index_html_data.c"
                     PRIV_REQUIRES esp_wifi nvs_flash esp_event esp_netif esp_timer
                                   lwip microlink wpa_supplicant
-                                  esp_http_client esp-tls mbedtls
+                                  esp-tls mbedtls
                                   esp_http_server json esp_app_format
                                   acl sdlog remote_console
                                   web_password net_diag dhcpserver
                                   espcoredump dns_relay cli
-                                  app_update esp_https_ota
+                                  app_update
                                   mqtt
                     INCLUDE_DIRS ".")
 

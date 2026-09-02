@@ -14,8 +14,6 @@
 #include "esp_system.h"
 #include "esp_heap_caps.h"
 #include "esp_app_desc.h"
-#include "esp_http_client.h"
-#include "esp_crt_bundle.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "cJSON.h"
@@ -46,7 +44,6 @@
  * log tail and the pre-crash snapshot share this ceiling so the JSON
  * stays bounded. */
 #define WEB_UI_LOG_SNAPSHOT_BYTES 4096
-#include "telemetry.h"
 #include "log_capture.h"
 #include "netif_hooks.h"
 #include "web_password.h"
@@ -407,29 +404,6 @@ static esp_err_t status_handler(httpd_req_t *req)
         }
     }
     cJSON_AddItemToObject(root, "tailscale", ts);
-
-    /* Telemetry summary — full counters in /api/system. */
-    telemetry_state_t tm = telemetry_get_state();
-    cJSON *tlm = cJSON_CreateObject();
-    cJSON_AddStringToObject(tlm, "status", tm.enabled ? "ok" : "off");
-    cJSON_AddNumberToObject(tlm, "boot_count",  tm.boot_count);
-    cJSON_AddNumberToObject(tlm, "flash_count", tm.flash_count);
-    cJSON_AddItemToObject(root, "telemetry", tlm);
-
-    /* OTA banner hint — minimal subset of /api/system ota{} so the
-     * Status page banner can render without a second round-trip. */
-    {
-        ota_state_t os;
-        ota_get_state(&os);
-        cJSON *o = cJSON_CreateObject();
-        cJSON_AddBoolToObject  (o, "update_available", os.update_available);
-        cJSON_AddBoolToObject  (o, "auto_install",     os.auto_install);
-        cJSON_AddBoolToObject  (o, "beta_channel",     os.beta_channel);
-        cJSON_AddNumberToObject(o, "install_hour",     os.install_hour);
-        cJSON_AddStringToObject(o, "latest_version",   os.last_version);
-        cJSON_AddStringToObject(o, "running_version",  os.running_version);
-        cJSON_AddItemToObject(root, "ota", o);
-    }
 
     char *body = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
@@ -1450,171 +1424,6 @@ static const httpd_uri_t uri_tools_trace = {
     .uri = "/api/tools/trace", .method = HTTP_GET, .handler = tools_trace_handler,
 };
 
-/* ─────────────────── On-device throughput test ───────────────────
- * Rough 1 MB download / upload against Cloudflare's speed endpoints, run
- * from the ESP itself (its own STA path — the route hook sends self-origin
- * traffic out via STA, bypassing any exit-node tunnel), so an upstream
- * slowdown can be confirmed independently of any AP client. One transient
- * task at a time; the body is streamed/discarded so the RAM cost is one
- * SPIRAM chunk + the task stack, and only while it runs. Cancellable. */
-#define NETTEST_BYTES    (1024u * 1024u)
-#define NETTEST_CHUNK    4096
-#define NETTEST_DOWN_URL "https://speed.cloudflare.com/__down?bytes=1048576"
-#define NETTEST_UP_URL   "https://speed.cloudflare.com/__up"
-
-typedef enum { NT_IDLE = 0, NT_RUNNING, NT_DONE, NT_CANCELLED, NT_ERROR } nt_state_t;
-static volatile nt_state_t s_nt_state  = NT_IDLE;
-static volatile bool       s_nt_cancel = false;
-static char     s_nt_dir[6]  = "";
-static uint32_t s_nt_bytes   = 0;
-static uint32_t s_nt_ms      = 0;       /* data-phase ms (TLS/headers excluded) */
-static char     s_nt_err[48] = "";
-static TaskHandle_t s_nt_task = NULL;
-
-static const char *nt_state_str(nt_state_t s)
-{
-    switch (s) {
-        case NT_RUNNING:   return "running";
-        case NT_DONE:      return "done";
-        case NT_CANCELLED: return "cancelled";
-        case NT_ERROR:     return "error";
-        default:           return "idle";
-    }
-}
-
-static void nettest_task(void *arg)
-{
-    bool up = ((intptr_t)arg) != 0;
-    char *buf = heap_caps_malloc(NETTEST_CHUNK, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!buf) {
-        strlcpy(s_nt_err, "no memory", sizeof s_nt_err);
-        s_nt_state = NT_ERROR; s_nt_task = NULL; vTaskDelete(NULL); return;
-    }
-
-    esp_http_client_config_t cfg = {
-        .url               = up ? NETTEST_UP_URL : NETTEST_DOWN_URL,
-        .method            = up ? HTTP_METHOD_POST : HTTP_METHOD_GET,
-        .timeout_ms        = 5000,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-    };
-    esp_http_client_handle_t cl = esp_http_client_init(&cfg);
-    if (!cl) {
-        strlcpy(s_nt_err, "client init failed", sizeof s_nt_err);
-        s_nt_state = NT_ERROR;
-        heap_caps_free(buf); s_nt_task = NULL; vTaskDelete(NULL); return;
-    }
-
-    uint32_t total = 0;
-    bool opened = false;
-    if (up) {
-        memset(buf, 'x', NETTEST_CHUNK);
-        if (esp_http_client_open(cl, NETTEST_BYTES) == ESP_OK) {
-            opened = true;
-            int64_t t0 = esp_timer_get_time();
-            while (total < NETTEST_BYTES && !s_nt_cancel) {
-                int n = (NETTEST_BYTES - total) < (uint32_t)NETTEST_CHUNK
-                        ? (int)(NETTEST_BYTES - total) : NETTEST_CHUNK;
-                int w = esp_http_client_write(cl, buf, n);
-                if (w <= 0) break;
-                total += w;
-            }
-            (void)esp_http_client_fetch_headers(cl);   /* complete the request */
-            s_nt_ms = (uint32_t)((esp_timer_get_time() - t0) / 1000);
-        }
-    } else {
-        if (esp_http_client_open(cl, 0) == ESP_OK) {
-            opened = true;
-            (void)esp_http_client_fetch_headers(cl);   /* TLS + headers BEFORE timing */
-            int64_t t0 = esp_timer_get_time();
-            for (;;) {
-                if (s_nt_cancel) break;
-                int r = esp_http_client_read(cl, buf, NETTEST_CHUNK);
-                if (r <= 0) break;
-                total += r;
-            }
-            s_nt_ms = (uint32_t)((esp_timer_get_time() - t0) / 1000);
-        }
-    }
-
-    s_nt_bytes = total;
-    if (!opened) {
-        if (!s_nt_err[0]) strlcpy(s_nt_err, "connect failed", sizeof s_nt_err);
-        s_nt_state = NT_ERROR;
-    } else if (s_nt_cancel) {
-        s_nt_state = NT_CANCELLED;
-    } else if (total >= NETTEST_BYTES) {
-        s_nt_state = NT_DONE;
-    } else {
-        strlcpy(s_nt_err, "transfer incomplete", sizeof s_nt_err);
-        s_nt_state = NT_ERROR;
-    }
-
-    esp_http_client_close(cl);
-    esp_http_client_cleanup(cl);
-    heap_caps_free(buf);
-    s_nt_task = NULL;
-    vTaskDelete(NULL);
-}
-
-static esp_err_t tools_nettest_get_handler(httpd_req_t *req)
-{
-    if (require_auth(req) != ESP_OK) return ESP_FAIL;
-    uint32_t bytes = s_nt_bytes, ms = s_nt_ms;
-    uint32_t kbps  = (ms > 0) ? (uint32_t)(((uint64_t)bytes * 8) / ms) : 0;  /* bytes*8/ms = kbit/s */
-    cJSON *r = cJSON_CreateObject();
-    cJSON_AddStringToObject(r, "state", nt_state_str(s_nt_state));
-    cJSON_AddStringToObject(r, "dir",   s_nt_dir);
-    cJSON_AddNumberToObject(r, "bytes", bytes);
-    cJSON_AddNumberToObject(r, "ms",    ms);
-    cJSON_AddNumberToObject(r, "kbps",  kbps);
-    if (s_nt_err[0]) cJSON_AddStringToObject(r, "err", s_nt_err);
-    char *body = cJSON_PrintUnformatted(r);
-    cJSON_Delete(r);
-    httpd_resp_set_type(req, "application/json");
-    esp_err_t e = httpd_resp_sendstr(req, body ? body : "{}");
-    free(body);
-    return e;
-}
-
-static esp_err_t tools_nettest_post_handler(httpd_req_t *req)
-{
-    if (require_auth(req) != ESP_OK) return ESP_FAIL;
-    char q[40], v[8];
-    bool cancel = false, up = false;
-    if (httpd_req_get_url_query_str(req, q, sizeof q) == ESP_OK) {
-        if (httpd_query_key_value(q, "cancel", v, sizeof v) == ESP_OK) cancel = true;
-        if (httpd_query_key_value(q, "dir", v, sizeof v) == ESP_OK && strcmp(v, "up") == 0) up = true;
-    }
-    httpd_resp_set_type(req, "application/json");
-    if (cancel) {
-        if (s_nt_state == NT_RUNNING) s_nt_cancel = true;
-        return httpd_resp_sendstr(req, "{\"ok\":true,\"cancelling\":true}");
-    }
-    if (s_nt_state == NT_RUNNING) {
-        return httpd_resp_sendstr(req, "{\"ok\":false,\"err\":\"busy\"}");
-    }
-    s_nt_cancel = false;
-    s_nt_bytes  = 0;
-    s_nt_ms     = 0;
-    s_nt_err[0] = '\0';
-    strlcpy(s_nt_dir, up ? "up" : "down", sizeof s_nt_dir);
-    s_nt_state  = NT_RUNNING;
-    if (xTaskCreate(nettest_task, "nettest", 8192, (void *)(intptr_t)(up ? 1 : 0),
-                    5, &s_nt_task) != pdPASS) {
-        s_nt_state = NT_ERROR;
-        strlcpy(s_nt_err, "task spawn failed", sizeof s_nt_err);
-        return httpd_resp_sendstr(req, "{\"ok\":false,\"err\":\"spawn\"}");
-    }
-    return httpd_resp_sendstr(req, "{\"ok\":true,\"running\":true}");
-}
-
-static const httpd_uri_t uri_tools_nettest_get = {
-    .uri = "/api/tools/nettest", .method = HTTP_GET, .handler = tools_nettest_get_handler,
-};
-static const httpd_uri_t uri_tools_nettest_post = {
-    .uri = "/api/tools/nettest", .method = HTTP_POST, .handler = tools_nettest_post_handler,
-};
-
 static esp_err_t firewall_handler(httpd_req_t *req)
 {
     if (require_auth(req) != ESP_OK) return ESP_FAIL;
@@ -1999,6 +1808,18 @@ static esp_err_t mqtt_handler(httpd_req_t *req)
                           config.home_assistant_discovery);
     cJSON_AddStringToObject(root, "discovery_prefix", config.discovery_prefix);
     cJSON_AddNumberToObject(root, "interval_seconds", config.interval_seconds);
+    cJSON_AddBoolToObject(root, "broker_watchdog_enabled",
+                          config.broker_watchdog_enabled);
+    cJSON_AddNumberToObject(root, "broker_watchdog_timeout_seconds",
+                            config.broker_watchdog_timeout_seconds);
+    cJSON_AddStringToObject(root, "broker_watchdog_wol_mac",
+                            config.broker_watchdog_wol_mac);
+    cJSON_AddBoolToObject(root, "broker_watchdog_triggered",
+                          mqtt_integration_watchdog_triggered());
+    cJSON_AddNumberToObject(root, "broker_watchdog_wake_count",
+                            mqtt_integration_watchdog_wake_count());
+    cJSON_AddNumberToObject(root, "broker_silence_seconds",
+                            mqtt_integration_broker_silence_seconds());
     char *body = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     if (!body) { httpd_resp_send_500(req); return ESP_FAIL; }
@@ -2031,6 +1852,7 @@ static esp_err_t mqtt_save_handler(httpd_req_t *req)
     COPY_MQTT_STRING("username", config.username);
     COPY_MQTT_STRING("base_topic", config.base_topic);
     COPY_MQTT_STRING("discovery_prefix", config.discovery_prefix);
+    COPY_MQTT_STRING("broker_watchdog_wol_mac", config.broker_watchdog_wol_mac);
     item = cJSON_GetObjectItem(root, "password");
     if (cJSON_IsString(item) && item->valuestring[0])
         strlcpy(config.password, item->valuestring, sizeof config.password);
@@ -2043,6 +1865,10 @@ static esp_err_t mqtt_save_handler(httpd_req_t *req)
     if (cJSON_IsBool(item)) config.home_assistant_discovery = cJSON_IsTrue(item);
     item = cJSON_GetObjectItem(root, "interval_seconds");
     if (cJSON_IsNumber(item)) config.interval_seconds = (uint16_t)item->valueint;
+    item = cJSON_GetObjectItem(root, "broker_watchdog_enabled");
+    if (cJSON_IsBool(item)) config.broker_watchdog_enabled = cJSON_IsTrue(item);
+    item = cJSON_GetObjectItem(root, "broker_watchdog_timeout_seconds");
+    if (cJSON_IsNumber(item)) config.broker_watchdog_timeout_seconds = (uint32_t)item->valuedouble;
     cJSON_Delete(root);
 
     bool valid_uri = !config.enabled
@@ -2052,9 +1878,21 @@ static esp_err_t mqtt_save_handler(httpd_req_t *req)
         || strncmp(config.uri, "wss://", 6) == 0;
     if (!valid_uri || !config.base_topic[0] || strchr(config.base_topic, '#')
         || strchr(config.base_topic, '+') || config.interval_seconds < 5
-        || config.interval_seconds > 3600) {
+        || config.interval_seconds > 3600
+        || config.broker_watchdog_timeout_seconds < 30
+        || config.broker_watchdog_timeout_seconds > 86400
+        || (config.broker_watchdog_enabled
+            && (!config.enabled || !config.broker_watchdog_wol_mac[0]))) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid MQTT settings");
         return ESP_FAIL;
+    }
+    if (config.broker_watchdog_wol_mac[0]) {
+        uint8_t mac[6];
+        if (!wol_parse_mac(config.broker_watchdog_wol_mac, mac)) {
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid watchdog WOL MAC");
+            return ESP_FAIL;
+        }
+        wol_format_mac(mac, config.broker_watchdog_wol_mac);
     }
     esp_err_t err = mqtt_integration_set_config(&config);
     httpd_resp_set_type(req, "application/json");
@@ -3315,18 +3153,6 @@ static esp_err_t system_handler(httpd_req_t *req)
         }
     }
 
-    /* Telemetry status — the API key is intentionally not exposed. */
-    telemetry_state_t tm = telemetry_get_state();
-    cJSON *t = cJSON_CreateObject();
-    cJSON_AddBoolToObject  (t, "enabled",     tm.enabled);
-    cJSON_AddStringToObject(t, "url",         tm.url);
-    cJSON_AddNumberToObject(t, "boot_count",  tm.boot_count);
-    cJSON_AddNumberToObject(t, "flash_count", tm.flash_count);
-    cJSON_AddStringToObject(t, "device_hash", tm.device_hash);
-    cJSON_AddNumberToObject(t, "last_send_ms", (double)tm.last_send_ms);
-    cJSON_AddStringToObject(t, "last_status", tm.last_status);
-    cJSON_AddItemToObject(root, "telemetry", t);
-
     /* Log tail — read into a heap buffer to keep the request handler
      * stack small. Truncated to a known size so the JSON stays bounded. */
     char *log_buf = malloc(WEB_UI_LOG_SNAPSHOT_BYTES);
@@ -3335,24 +3161,6 @@ static esp_err_t system_handler(httpd_req_t *req)
         log_buf[n] = '\0';
         cJSON_AddStringToObject(root, "log_tail", log_buf);
         free(log_buf);
-    }
-
-    /* OTA — poller state. Poll period is now a fixed 24 h, not a
-     * setting; the only opt-in is auto_install + a preferred install
-     * hour (-1 = ASAP). update_available drives the Status banner. */
-    {
-        ota_state_t os;
-        ota_get_state(&os);
-        cJSON *o = cJSON_CreateObject();
-        cJSON_AddBoolToObject  (o, "auto_install",     os.auto_install);
-        cJSON_AddBoolToObject  (o, "beta_channel",     os.beta_channel);
-        cJSON_AddNumberToObject(o, "install_hour",     os.install_hour);
-        cJSON_AddNumberToObject(o, "last_check",       os.last_check);
-        cJSON_AddStringToObject(o, "running_version",  os.running_version);
-        cJSON_AddStringToObject(o, "last_version",     os.last_version);
-        cJSON_AddStringToObject(o, "last_status",      os.last_status);
-        cJSON_AddBoolToObject  (o, "update_available", os.update_available);
-        cJSON_AddItemToObject(root, "ota", o);
     }
 
     /* Reset history — last 10 boots, [0] is the most recent. The recorder
@@ -3472,34 +3280,6 @@ static esp_err_t system_save_handler(httpd_req_t *req)
         if (v >= 8) esp_wifi_set_max_tx_power((int8_t)v);
     }
 
-    /* Telemetry block — only the enabled toggle is editable from the UI.
-     * The worker URL + X-Tlm-Key live in the firmware to keep them off
-     * the operator's editable surface. */
-    const cJSON *t = cJSON_GetObjectItem(root, "telemetry");
-    if (cJSON_IsObject(t)) {
-        const cJSON *en = cJSON_GetObjectItem(t, "enabled");
-        if (cJSON_IsBool(en))  telemetry_set_enabled(cJSON_IsTrue(en));
-    }
-
-    /* OTA settings — auto_install toggle + preferred install_hour.
-     * Polling itself is non-configurable (daily). Omitting either
-     * key preserves its current value, so the SPA can PATCH one
-     * field without round-tripping both. */
-    const cJSON *o = cJSON_GetObjectItem(root, "ota");
-    if (cJSON_IsObject(o)) {
-        ota_state_t cur; ota_get_state(&cur);
-        const cJSON *en = cJSON_GetObjectItem(o, "auto_install");
-        const cJSON *ih = cJSON_GetObjectItem(o, "install_hour");
-        bool auto_install = cJSON_IsBool(en)   ? cJSON_IsTrue(en)
-                                               : cur.auto_install;
-        int  install_hour = cJSON_IsNumber(ih) ? (int)ih->valuedouble
-                                               : cur.install_hour;
-        ota_set_settings(auto_install, install_hour);
-        const cJSON *bt = cJSON_GetObjectItem(o, "beta");
-        if (cJSON_IsBool(bt)) ota_set_beta(cJSON_IsTrue(bt));
-    }
-
-
     cJSON_Delete(root);
     /* Surface any NVS write failures from the save path — see the
      * twin block in tailscale_save_handler. */
@@ -3583,63 +3363,6 @@ static esp_err_t system_ota_upload_handler(httpd_req_t *req)
 }
 static const httpd_uri_t uri_system_ota = {
     .uri = "/api/system/ota", .method = HTTP_POST, .handler = system_ota_upload_handler,
-};
-
-/* Operator-driven "check GitHub now" button — synchronous one-shot. */
-static esp_err_t system_ota_poll_handler(httpd_req_t *req)
-{
-    if (require_auth(req) != ESP_OK) return ESP_FAIL;
-    char status[64] = {0};
-    ota_poll_now(status, sizeof status);
-    cJSON *root = cJSON_CreateObject();
-    cJSON_AddBoolToObject  (root, "ok", true);
-    cJSON_AddStringToObject(root, "status", status);
-    char *body = cJSON_PrintUnformatted(root);
-    cJSON_Delete(root);
-    httpd_resp_set_type(req, "application/json");
-    esp_err_t e = httpd_resp_sendstr(req, body ? body : "{\"ok\":true}");
-    free(body);
-    return e;
-}
-static const httpd_uri_t uri_system_ota_poll = {
-    .uri = "/api/system/ota/poll", .method = HTTP_POST, .handler = system_ota_poll_handler,
-};
-
-/* Operator-driven "install now" — applies the cached pending update
- * (set by the latest poll) and reboots. No-op if update_available
- * is false. */
-/* ota_install_now() reboots on success but RETURNS on failure (e.g. a
- * download error). A FreeRTOS task entry function must never return — doing
- * so trips "Task should not return, Aborting now!" and panics the device, so
- * a failed OTA would crash + reboot instead of just surfacing the error.
- * Run it inside a wrapper that deletes the task on the failure path. */
-static void ota_install_task(void *arg)
-{
-    (void)arg;
-    ota_install_now();   /* reboots on success */
-    vTaskDelete(NULL);   /* failure path: clean up instead of aborting */
-}
-
-static esp_err_t system_ota_install_handler(httpd_req_t *req)
-{
-    if (require_auth(req) != ESP_OK) return ESP_FAIL;
-    ota_state_t cur; ota_get_state(&cur);
-    if (!cur.update_available) {
-        httpd_resp_set_type(req, "application/json");
-        return httpd_resp_sendstr(req,
-            "{\"ok\":false,\"reason\":\"no update available\"}");
-    }
-    httpd_resp_set_type(req, "application/json");
-    esp_err_t e = httpd_resp_sendstr(req,
-        "{\"ok\":true,\"reboot_required\":true}");
-    /* Fire-and-forget so the HTTP response gets flushed before the
-     * blocking download begins. ota_install_now() reboots on success. */
-    xTaskCreate(ota_install_task, "ota_inst", 6144, NULL, 3, NULL);
-    return e;
-}
-static const httpd_uri_t uri_system_ota_install = {
-    .uri = "/api/system/ota/install", .method = HTTP_POST,
-    .handler = system_ota_install_handler,
 };
 
 /* ---- Encrypted-secrets backup endpoints ---------------------------------
@@ -4756,8 +4479,6 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_tools_route);
     httpd_register_uri_handler(server, &uri_tools_ping);
     httpd_register_uri_handler(server, &uri_tools_trace);
-    httpd_register_uri_handler(server, &uri_tools_nettest_get);
-    httpd_register_uri_handler(server, &uri_tools_nettest_post);
     httpd_register_uri_handler(server, &uri_firewall);
     httpd_register_uri_handler(server, &uri_firewall_add);
     httpd_register_uri_handler(server, &uri_firewall_delete);
@@ -4782,8 +4503,6 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_system_restart);
     httpd_register_uri_handler(server, &uri_system_factory_reset);
     httpd_register_uri_handler(server, &uri_system_ota);
-    httpd_register_uri_handler(server, &uri_system_ota_poll);
-    httpd_register_uri_handler(server, &uri_system_ota_install);
     httpd_register_uri_handler(server, &uri_system_secrets_get);
     httpd_register_uri_handler(server, &uri_system_secrets_post);
     httpd_register_uri_handler(server, &uri_system_diag);

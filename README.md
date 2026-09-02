@@ -90,7 +90,7 @@ your expectations accordingly.
 - IoT / home-automation gear: **sensors, smart switches, plugs,
   thermostats**, energy/environmental monitors, ESPHome / Zigbee / MQTT
   bridges — anything small and low-bandwidth.
-- Low-rate control & telemetry: bursty, tiny payloads that are perfectly
+- Low-rate control and status traffic: bursty, tiny payloads that are perfectly
   happy with around a megabit.
 - Reaching a device stuck behind NAT/CGNAT so you (or Home Assistant) can
   poll it, flip a relay, or SSH in from anywhere on your tailnet.
@@ -135,8 +135,8 @@ traffic you route through it.)*
 - **DNS forwarder with cache** — on-board resolver for AP clients with a
   PSRAM-backed response cache and configurable upstream.
 - **Operations toolbox** — on-device ping / traceroute / route-explain,
-  a 1 MB download/upload speed test, live WiFi scan, and a
-  microSD "flight recorder" for catching control-plane stalls.
+  live WiFi scan, and a microSD "flight recorder" for catching
+  control-plane stalls.
 - **DHCP niceties** — reservations, live lease table, per-client signal,
   and a MAC denylist.
 - **Selectable recovery AP** — keep the setup access point permanently on,
@@ -147,13 +147,12 @@ traffic you route through it.)*
 - **MQTT + Home Assistant** — retained health/network/Tailscale state,
   inbound AP/restart/WOL commands, Last Will availability, and automatic
   Home Assistant discovery (including one Wake button per saved device).
-- **Robust by design** — encrypted config backup/restore, OTA updates
-  (with an opt-in beta channel for pre-releases), per-sink (console + SD)
-  log levels, auto AP-channel realign on STA roam, and pre-crash log capture.
-- **Anonymous telemetry (on by default, one toggle to opt out)** — a tiny
-  daily payload: a salted one-way device hash + boot/flash counters +
-  firmware/chip/uptime + reboot/crash cause. Never SSIDs, IPs, MACs,
-  tailnet, or peers — and fully inspectable in `main/telemetry.c`.
+- **Robust by design** — encrypted config backup/restore, local-only manual
+  OTA upload, per-sink (console + SD) log levels, auto AP-channel realign on
+  STA roam, and pre-crash log capture.
+- **Private by design** — no usage reports, crash uploads, release polling,
+  or automatic firmware downloads. Outbound application traffic is limited
+  to Tailscale and the MQTT broker explicitly configured by the operator.
 
 ## Hardware
 
@@ -333,8 +332,8 @@ The single-page UI has six sections:
 | **Network** | Uplink networks, AP (SSID/IP/DNS), DHCP reservations & leases, MAC denylist, port forwarding |
 | **Tailscale** | Auth key, hostname, advertised routes, exit node, MTU, peer table |
 | **Firewall** | The four ACL chains, rule editor, hit counters |
-| **Diagnostics** | Route-explain, ping, traceroute, speed test, WiFi scan, live + SD logs |
-| **System** | Device name, firmware/OTA, SD-card logging, backup, danger zone, About (telemetry toggle) |
+| **Diagnostics** | Route-explain, ping, traceroute, WiFi scan, live + SD logs |
+| **System** | Device name, manual firmware upload, SD-card logging, backup, danger zone, privacy status |
 
 ### Firewall / ACL
 
@@ -440,76 +439,14 @@ key); disable it for the tailnet or pre-authorize the node.
   certificate (self-signed is rejected).
 - **2.4 GHz only**, single AP subnet.
 
-## Telemetry
+## Privacy and outbound traffic
 
-The device reports a tiny, fully anonymous status payload to a Cloudflare
-Worker — a small JSON on boot, then a heartbeat roughly once a day. **It's
-on by default**, and one toggle in the **About** section (System tab)
-turns it off for good (the choice is saved in NVS). Anyone can verify exactly what it
-does — the whole thing is one function in
-[`main/telemetry.c`](main/telemetry.c).
-
-### Exactly what it sends
-
-This is the *entire* payload — nothing else leaves the device:
-
-```json
-{
-  "dh": "a1b2c3d4e5f6071839",
-  "v":  "0.1.9",
-  "bd": "2026-05-31",
-  "et": "heartbeat",
-  "bc": 276,
-  "fc": 158,
-  "up": 90074,
-  "rr": 1,
-  "rw": "",
-  "ch": "S3r0",
-  "fh": 53707,
-  "ac": 42,
-  "ts": "up"
-}
-```
-
-| Field | Meaning | Example |
-|---|---|---|
-| `dh` | anonymous device ID — 16-hex `SHA-256(WiFi MAC + fixed salt)` plus a 2-hex integrity check (18 hex total). One-way; it can't be turned back into your MAC | `a1b2c3d4e5f6071839` |
-| `v`  | firmware version | `0.1.9` |
-| `bd` | firmware build date | `2026-05-31` |
-| `et` | event type — `boot`, `heartbeat`, or a crash report | `heartbeat` |
-| `bc` | total boot count | `276` |
-| `fc` | total firmware-flash count | `158` |
-| `up` | uptime, seconds | `90074` |
-| `rr` | reset-reason code (ESP-IDF reason, or `100` = new firmware / `101` = rollback) | `1` |
-| `rw` | short reboot-reason tag, or empty | `ch-realign 11->1` |
-| `ch` | chip model + silicon revision | `S3r0` |
-| `fh` | free heap at send time, bytes | `53707` |
-| `ac` | Tailscale (re)connect count this session | `42` |
-| `ts` | Tailscale toggle — `up` or `off` (just the switch; **no peers, no tailnet name**) | `up` |
-| `cr` | crash signature — **only** added to a crash report | `StoreProhibited @ ml_derp_tx` |
-
-It **never** sends SSIDs, IP or MAC addresses, tailnet names, peer
-information, or anything you typed into the UI. The device ID is a salted
-one-way hash (`compute_device_hash()` in
-[`main/telemetry.c`](main/telemetry.c)), so reports can be grouped per
-device without ever identifying one.
-
-### Why it's on by default (a note from the maintainer)
-
-No hidden agenda — the JSON above is literally all of it, and the code is
-right there to check. I'd genuinely appreciate you leaving it on unless
-you have a specific reason not to:
-
-- It's how I'd catch a **mass PANIC** rolling across devices after a bad
-  release — the same crash signature arriving from many `dh`s at once is a
-  five-alarm fire I'd otherwise never see.
-- Fully anonymized, it's the *only* signal I get for **how many people
-  actually run this**. This is a free hobby project; if essentially nobody
-  uses it long-term, that's fair feedback that I shouldn't keep pouring
-  effort in.
-
-Either way it's your call — flip it off in **About → Anonymous telemetry**
-(System tab) and the device never phones home again.
+This build contains no usage reporting, crash upload, release polling, or
+automatic firmware download. Crash summaries and logs stay on the device.
+The only application-level outbound connections are Tailscale/Headscale and,
+when enabled by the operator, the configured MQTT broker. DNS, DHCP and NTP
+remain available as infrastructure needed to resolve and establish those
+connections. Diagnostic ping and traceroute run only when explicitly started.
 
 ## Security
 
@@ -525,7 +462,7 @@ main/                 firmware entry, web server + embedded SPA (index.html)
 components/
   acl/                the ACL firewall engine
   sdlog/              microSD flight-recorder
-  …                   DNS relay, telemetry, etc.
+  …                   DNS relay, DHCP server, etc.
 external/microlink/   Tailscale/WireGuard stack (git submodule, MIT)
 docs/                 configuration reference, images
 tools/                helper scripts

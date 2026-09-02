@@ -36,7 +36,7 @@ extern "C" {
  * to see PAST the abort() machinery (panic_abort/esp_system_abort/abort,
  * which are the same 3 frames for every abort-based panic) to the real
  * culprit. The full panic dump still lives in the coredump partition; the
- * full frame list also rides up to telemetry via NVS.last_crash.
+ * full frame list is kept locally in NVS for the Diagnostics page.
  * Note: a struct-size change invalidates the old blob, so reset history is
  * zeroed once on the first boot of this firmware (one-time, harmless). */
 typedef struct {
