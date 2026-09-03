@@ -31,6 +31,9 @@ connected board.
 - Optional web password gate and session timeout. Passwords of at least four
   characters are accepted, with a visible warning for weak choices. Password
   verifiers use salted PBKDF2-HMAC-SHA256 and legacy records upgrade on login.
+  After the first full verification following a reboot, a non-persistent,
+  salted exact-match cache makes later correct UI unlocks prompt without
+  weakening the verifier stored in NVS.
 - Manual local OTA upload and explicit privacy/outbound-traffic reporting.
 
 ## Removed from upstream main

@@ -5,7 +5,9 @@ Firmware: 0.1.19-Mattboxx
 
 This refreshed build adds stronger password storage, browser security headers,
 safer ntfy info replies, plaintext-transport warnings, and keeps automatic
-telemetry/update polling removed.
+telemetry/update polling removed. Repeated correct web-UI unlocks are now fast:
+the full PBKDF2 check is retained for the first login after each reboot, then a
+salted RAM-only cache is used until the password changes or the ESP restarts.
 
 Requirements: 64-bit Windows 10/11, an ESP32-S3 connected over USB, and
 every serial monitor closed.

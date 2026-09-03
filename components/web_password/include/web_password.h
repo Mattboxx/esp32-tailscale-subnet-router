@@ -18,7 +18,9 @@ extern "C" {
 /* True if a non-empty password is stored. */
 bool      is_web_password_set(void);
 
-/* Constant-time verify against the stored hash. */
+/* Constant-time verification. The first success after boot checks the stored
+ * PBKDF2 record and seeds a non-persistent exact-match cache so later UI
+ * unlocks do not repeatedly block the ESP HTTP task. */
 bool      verify_web_password(const char *plaintext);
 
 /* Salt + hash + persist. Empty string disables protection. */

@@ -6,6 +6,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+
+- **Repeated web-UI unlocks no longer rerun the full password KDF.** The first
+  successful login after boot still verifies the NVS record with 60,000-round
+  PBKDF2-HMAC-SHA256. It then seeds a salted, RAM-only exact-match cache so
+  later correct unlocks after an idle timeout return promptly. Cache misses
+  still take the PBKDF2 path, and changing or clearing the password invalidates
+  the cache.
+
 ## [0.1.19] — 2026-08-15
 
 Stable release. Promotes the 0.1.19-beta1 DERP-liveness work to a stable

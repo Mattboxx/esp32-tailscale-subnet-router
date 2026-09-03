@@ -8,6 +8,7 @@
 #include <stdbool.h>
 #include "esp_err.h"
 #include "esp_random.h"
+#include "freertos/FreeRTOS.h"
 #include "mbedtls/md.h"
 #include "mbedtls/sha256.h"
 #include "nvs.h"
@@ -25,6 +26,19 @@
 #define PW_PBKDF2_ITERS  60000U
 #define PW_PBKDF2_ITERS_MIN 10000U
 #define PW_PBKDF2_ITERS_MAX 500000U
+
+/* A successful PBKDF2 verification seeds a boot-local, salted exact-match
+ * cache.  It is deliberately never persisted: the strong PBKDF2 record
+ * remains the only password verifier in NVS and the first login after every
+ * reboot still proves the password against it.  Subsequent correct unlocks
+ * (for example after an idle session timeout) avoid repeatedly blocking the
+ * ESP HTTP task for the full PBKDF2 run.  Cache misses still fall through to
+ * PBKDF2, preserving the cost of wrong guesses in addition to endpoint rate
+ * limiting. */
+static portMUX_TYPE s_fast_cache_mux = portMUX_INITIALIZER_UNLOCKED;
+static bool    s_fast_cache_valid;
+static uint8_t s_fast_cache_salt[PW_SALT_LEN];
+static uint8_t s_fast_cache_hash[PW_HASH_LEN];
 
 /* Local helpers — raw NVS instead of nvs_params.h to avoid pulling a
  * cross-component dep on main. */
@@ -139,6 +153,58 @@ static bool hashes_equal(const uint8_t a[PW_HASH_LEN],
     return diff == 0;
 }
 
+static void fast_cache_invalidate(void)
+{
+    portENTER_CRITICAL(&s_fast_cache_mux);
+    s_fast_cache_valid = false;
+    memset(s_fast_cache_salt, 0, sizeof s_fast_cache_salt);
+    memset(s_fast_cache_hash, 0, sizeof s_fast_cache_hash);
+    portEXIT_CRITICAL(&s_fast_cache_mux);
+}
+
+static void fast_cache_store(const char *plaintext)
+{
+    uint8_t salt[PW_SALT_LEN];
+    uint8_t hash[PW_HASH_LEN];
+    esp_fill_random(salt, sizeof salt);
+    compute_hash(salt, sizeof salt, plaintext, hash);
+
+    portENTER_CRITICAL(&s_fast_cache_mux);
+    memcpy(s_fast_cache_salt, salt, sizeof salt);
+    memcpy(s_fast_cache_hash, hash, sizeof hash);
+    s_fast_cache_valid = true;
+    portEXIT_CRITICAL(&s_fast_cache_mux);
+
+    volatile uint8_t *wipe = hash;
+    for (size_t i = 0; i < sizeof hash; i++) wipe[i] = 0;
+}
+
+static bool fast_cache_matches(const char *plaintext)
+{
+    uint8_t salt[PW_SALT_LEN];
+    uint8_t expected[PW_HASH_LEN];
+
+    portENTER_CRITICAL(&s_fast_cache_mux);
+    bool valid = s_fast_cache_valid;
+    if (valid) {
+        memcpy(salt, s_fast_cache_salt, sizeof salt);
+        memcpy(expected, s_fast_cache_hash, sizeof expected);
+    }
+    portEXIT_CRITICAL(&s_fast_cache_mux);
+    if (!valid) return false;
+
+    uint8_t computed[PW_HASH_LEN];
+    compute_hash(salt, sizeof salt, plaintext, computed);
+    bool match = hashes_equal(expected, computed);
+    volatile uint8_t *wipe_computed = computed;
+    volatile uint8_t *wipe_expected = expected;
+    for (size_t i = 0; i < sizeof computed; i++) {
+        wipe_computed[i] = 0;
+        wipe_expected[i] = 0;
+    }
+    return match;
+}
+
 static bool verify_legacy_sha256(const char *stored, const char *plaintext)
 {
     const char *colon = strchr(stored, ':');
@@ -188,6 +254,8 @@ bool is_web_password_set(void)
 bool verify_web_password(const char *plaintext)
 {
     if (!plaintext) return false;
+    if (fast_cache_matches(plaintext)) return true;
+
     char *stored = nvs_dup_str(PW_NVS_KEY);
     if (!stored) return false;
 
@@ -201,13 +269,23 @@ bool verify_web_password(const char *plaintext)
      * then is immediately replaced with the slower version. Login still
      * succeeds if the NVS rewrite fails; availability must not depend on a
      * migration write, and the next successful login will retry it. */
-    if (ok && !modern) (void)set_web_password_hashed(plaintext);
+    if (ok && !modern) {
+        /* set_web_password_hashed() also seeds the fast cache after the
+         * upgraded verifier has reached NVS. */
+        if (set_web_password_hashed(plaintext) != ESP_OK) {
+            fast_cache_store(plaintext);
+        }
+    } else if (ok) {
+        fast_cache_store(plaintext);
+    }
     return ok;
 }
 
 esp_err_t set_web_password_hashed(const char *plaintext)
 {
     if (!plaintext) return ESP_ERR_INVALID_ARG;
+    /* Never let a cached verifier survive a password change or clear. */
+    fast_cache_invalidate();
     if (plaintext[0] == '\0') {
         return nvs_write_str(PW_NVS_KEY, "");
     }
@@ -225,5 +303,7 @@ esp_err_t set_web_password_hashed(const char *plaintext)
     snprintf(buf, sizeof buf, PW_PBKDF2_PREFIX "%u$%s$%s",
              (unsigned)PW_PBKDF2_ITERS, salt_hex, hash_hex);
 
-    return nvs_write_str(PW_NVS_KEY, buf);
+    esp_err_t err = nvs_write_str(PW_NVS_KEY, buf);
+    if (err == ESP_OK) fast_cache_store(plaintext);
+    return err;
 }
