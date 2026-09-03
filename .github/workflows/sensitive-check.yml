@@ -117,10 +117,15 @@ jobs:
 
                   # Skip binary files
                   try:
-                      with open(filepath, "r", encoding="utf-8", errors="ignore") as fh:
-                          lines = fh.readlines()
+                      raw = open(filepath, "rb").read()
                   except Exception:
                       continue
+                  # Text rules such as RFC1918 addresses and PEM parser
+                  # markers produce false positives in compiled firmware.
+                  # Binary artifacts get a separate high-confidence scan below.
+                  if b"\x00" in raw:
+                      continue
+                  lines = raw.decode("utf-8", errors="ignore").splitlines(True)
 
                   for line_num, line in enumerate(lines, 1):
                       for match in regex.finditer(line):
@@ -137,4 +142,60 @@ jobs:
               sys.exit(1)
 
           print("✅ No sensitive content found")
+          PYTHON_SCRIPT
+
+      - name: Scan binary release artifacts
+        run: |
+          python3 << 'PYTHON_SCRIPT'
+          import base64
+          import pathlib
+          import re
+          import sys
+          import zipfile
+
+          artifacts = pathlib.Path("flash-package")
+          blobs = []
+          for path in artifacts.glob("*.bin"):
+              blobs.append((str(path), path.read_bytes()))
+          for archive in artifacts.glob("*.zip"):
+              with zipfile.ZipFile(archive) as zf:
+                  for name in zf.namelist():
+                      blobs.append((f"{archive}:{name}", zf.read(name)))
+
+          rules = {
+              "Tailscale/Headscale auth key": rb"\b(?:tskey|hskey)-[A-Za-z0-9_-]{12,}",
+              "GitHub token": rb"\b(?:gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{40,})\b",
+              "Cloudflare API token": rb"\bcfat_[A-Za-z0-9_-]{20,}\b",
+              "AWS access key": rb"\bAKIA[0-9A-Z]{16}\b",
+              "Google API key": rb"\bAIza[0-9A-Za-z_-]{30,}\b",
+              "JWT": rb"eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}",
+              "Credentials embedded in URL": rb"https?://[^\s/:@]+:[^\s/@]+@",
+              "Developer home path": rb"(?i)(?:[A-Z]:\\Users\\|/Users/|/home/)[^\\/\x00\s]+",
+          }
+          failures = []
+          for source, data in blobs:
+              for name, pattern in rules.items():
+                  if re.search(pattern, data):
+                      failures.append((name, source))
+
+              # Libraries contain literal BEGIN/END strings for their PEM
+              # parsers. Flag only a syntactically complete, base64-decodable
+              # DER private-key block, not those harmless parser constants.
+              pem = re.compile(
+                  rb"-----BEGIN ((?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY)-----\s+"
+                  rb"([A-Za-z0-9+/=\r\n]{40,})-----END \1-----")
+              for match in pem.finditer(data):
+                  try:
+                      decoded = base64.b64decode(
+                          re.sub(rb"\s+", b"", match.group(2)), validate=True)
+                  except Exception:
+                      continue
+                  if len(decoded) > 16:
+                      failures.append(("Embedded private key", source))
+
+          for name, source in failures:
+              print(f"::error file={source}::{name} found in release artifact")
+          if failures:
+              sys.exit(1)
+          print(f"✅ No secrets found in {len(blobs)} binary/archive payloads")
           PYTHON_SCRIPT
