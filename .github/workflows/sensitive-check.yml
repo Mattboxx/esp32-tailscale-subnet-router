@@ -1,6 +1,7 @@
 name: Sensitive Data Check
 
 on:
+  workflow_dispatch:
   push:
     branches: [mattboxx]
   pull_request:
