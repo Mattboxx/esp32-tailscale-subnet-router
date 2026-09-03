@@ -1,6 +1,7 @@
 """Shared helpers, context and result types for the test runner."""
 from __future__ import annotations
 import os
+import shlex
 import sys
 import time
 import json
@@ -148,7 +149,12 @@ class SshClient:
         if paramiko is None:
             raise RuntimeError("paramiko not installed (`pip install paramiko`)")
         self.c = paramiko.SSHClient()
-        self.c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        self.c.load_system_host_keys()
+        known_hosts = os.environ.get(
+            "SSH_KNOWN_HOSTS", os.path.expanduser("~/.ssh/known_hosts"))
+        if os.path.isfile(known_hosts):
+            self.c.load_host_keys(known_hosts)
+        self.c.set_missing_host_key_policy(paramiko.RejectPolicy())
         kw: dict = {"username": user, "timeout": timeout, "look_for_keys": True, "allow_agent": True}
         if password:
             kw.update(password=password, look_for_keys=False, allow_agent=False)
@@ -159,10 +165,13 @@ class SshClient:
 
     def run(self, cmd: str, sudo: bool = False, timeout: int = 20) -> tuple[int, str, str]:
         if sudo and self._password:
-            cmd = f"echo {self._password} | sudo -S -p '' bash -c {repr(cmd)}"
+            cmd = f"sudo -S -p '' bash -c {shlex.quote(cmd)}"
         elif sudo:
-            cmd = f"sudo -n bash -c {repr(cmd)}"
+            cmd = f"sudo -n bash -c {shlex.quote(cmd)}"
         stdin, stdout, stderr = self.c.exec_command(cmd, timeout=timeout)
+        if sudo and self._password:
+            stdin.write(self._password + "\n")
+            stdin.flush()
         out = stdout.read().decode("utf-8", "replace")
         err = stderr.read().decode("utf-8", "replace")
         rc  = stdout.channel.recv_exit_status()

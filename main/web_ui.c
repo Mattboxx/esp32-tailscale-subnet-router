@@ -893,7 +893,7 @@ static bool maintain_ap_cidr_in_routes(const char *old_cidr,
     }
     ESP_LOGI(TAG, "ts_routes: AP CIDR %s%s%s — offering UI update",
              old_cidr ? old_cidr : "(none)",
-             (old_cidr && new_cidr) ? " → " : "",
+             old_cidr ? " → " : "",
              new_cidr);
     (void)old_present; (void)new_present; (void)unchanged;
     return true;

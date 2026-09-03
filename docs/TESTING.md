@@ -33,6 +33,7 @@ Everything is env-var driven so no IPs or credentials get committed.
 | `PI_WIFI_IP`       | IP the Pi gets from the ESP's DHCP                         | `192.0.2.101`    |
 | `DK_HOST`          | tailnet/LAN IP of the read-only diag node                  | `192.0.2.200`    |
 | `DK_USER`          | SSH user (default `root`, key auth)                        | `root`           |
+| `SSH_KNOWN_HOSTS`  | optional known-hosts file; defaults to `~/.ssh/known_hosts`| `/secure/known_hosts` |
 | `DK_TAILNET_IP`    | that node's `100.x` tailnet IP (Pi → tailnet target)       | `100.x.x.x`      |
 | `DK_SUBNET_TARGET` | a host inside the LAN advertised by `DK_HOST`              | `192.0.2.250`    |
 | `EXIT_NODE_IP`     | (optional) tailnet IP to use as exit node in stage B       | `100.x.x.x`      |
@@ -43,6 +44,10 @@ Drop those into a local `.env` (gitignored) and source it before running:
 ```bash
 set -a; source .env; set +a
 ```
+
+SSH host keys are verified and unknown hosts are rejected. Connect once with
+your normal SSH client to verify/add each test host, or point
+`SSH_KNOWN_HOSTS` at a separately managed known-hosts file.
 
 ## Running
 
