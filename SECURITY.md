@@ -43,6 +43,34 @@ This project is under **heavy development**. Only the current `mattboxx` branch 
 supported for security fixes. Older commits and unreleased snapshots are not
 maintained.
 
+## Deployment hardening
+
+- Keep the web password gate enabled. Short passwords are accepted for device
+  recovery and compatibility, but a long unique password is strongly advised.
+  Password verifiers use salted PBKDF2-HMAC-SHA256; older SHA-256 records are
+  upgraded automatically after the next successful login.
+- The embedded UI is HTTP-only. Do not forward port 80 to the Internet or an
+  untrusted VLAN. Prefer access through a trusted LAN or the encrypted
+  Tailscale path, and disable the access point when it is not needed.
+- Prefer `mqtts://`, `wss://`, and `https://` transports. If a plaintext local
+  MQTT or ntfy server is unavoidable, isolate it on a trusted network and use
+  broker/topic ACLs. Anyone allowed to publish commands can operate WOL and
+  the exposed router controls.
+- Use an access-controlled, unguessable ntfy topic. The optional `info`
+  response never contains passwords or tokens; network topology, peer names/
+  IPs, AP-client MACs and saved WOL targets are omitted unless the separate
+  private-details option is explicitly enabled.
+
+## Hardware-security boundary
+
+The general-purpose release does not enable ESP32 Secure Boot, flash
+encryption, or encrypted NVS. Those features require owner-specific keys and
+an irreversible provisioning procedure; enabling them in a universal binary
+would either embed a shared secret or risk making boards unflashable. Treat
+physical access as trusted. A device-specific hardened build should provision
+unique keys, enable Secure Boot and flash/NVS encryption, then retain an
+offline recovery copy of those keys.
+
 ## History rewrite — 2026-06-01
 
 The git history of this repository was rewritten on 2026-06-01 to remove

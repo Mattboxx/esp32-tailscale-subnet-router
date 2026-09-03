@@ -3,6 +3,10 @@ ESP32-S3 ROUTER - WINDOWS FLASH PACKAGE
 
 Firmware: 0.1.19-Mattboxx
 
+This refreshed build adds stronger password storage, browser security headers,
+safer ntfy info replies, plaintext-transport warnings, and keeps automatic
+telemetry/update polling removed.
+
 Requirements: 64-bit Windows 10/11, an ESP32-S3 connected over USB, and
 every serial monitor closed.
 

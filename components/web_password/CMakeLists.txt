@@ -1,4 +1,4 @@
-# Web/admin password — salt + SHA-256 hash, persisted via raw NVS.
+# Web/admin password — salted PBKDF2-HMAC-SHA256, persisted via raw NVS.
 # Lives in its own component so both main (web_ui) and remote_console
 # can PRIV_REQUIRES it without main+component cycles.
 

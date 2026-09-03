@@ -460,11 +460,15 @@ key); disable it for the tailnet or pre-authorize the node.
 - **Local web UI uses HTTP.** Tailscale still encrypts tailnet transport, but
   administer the device only from a trusted LAN/AP or through Tailscale. A
   hostile client on the same local network can otherwise observe HTTP traffic.
+  Browser hardening headers reduce injection/clickjacking exposure but cannot
+  provide transport encryption.
 - **Physical extraction is not prevented.** The portable factory image leaves
   ESP32-S3 Secure Boot, flash encryption and NVS encryption disabled. Someone
   with physical access can read stored credentials or replace the firmware.
 - **Remote automation is as trusted as its transport.** Use MQTT/ntfy TLS,
   private topics and broker/server ACLs, especially when commands are enabled.
+  The dashboard warns on plaintext transports, and ntfy `info` hides private
+  network details unless they are explicitly enabled.
 - **ESP-IDF 5.3.1.** The pinned PlatformIO framework must be compatibility-tested
   before a patch-line upgrade; security-relevant upstream fixes are reviewed
   against the enabled feature set in this fork.

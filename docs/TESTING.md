@@ -147,11 +147,9 @@ round-trip via `/api/*` — no Pi, no DK side-channel required.
 * **/api/system shape** — top-level `version` is non-empty.
 * **reset_history[]** — present + `reason / wallclock / who / crash`
   keys on `[0]`.
-* **ota{}** — block present with `auto_enabled / poll_s / last_check /
-  last_version / last_status`; toggle `auto_enabled`, read it back,
-  restore.
-* **/api/system/ota/poll** — endpoint returns a `status` field
-  (typically `"github http 404"` until a release is published).
+* **Privacy OTA surface** — automatic GitHub update metadata is absent and
+  `/api/system/ota/poll` remains unavailable. Firmware updates are manual,
+  authenticated uploads only.
 * **/api/log/precrash shape** — `have` + `size` keys present
   (content depends on whether the previous boot crashed).
 * **STA TTL override** — POST `sta_ttl_override=64` via /api/network,

@@ -12,6 +12,7 @@ typedef struct {
     bool commands_only_when_tailscale_down;
     bool allow_direct_mac;
     bool info_enabled;
+    bool info_include_details;
     char server[160];
     char topic[96];
     char token[160];

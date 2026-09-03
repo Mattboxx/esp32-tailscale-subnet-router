@@ -12,8 +12,8 @@ Official archive SHA256:
 
 Included file SHA256 values:
 bootloader.bin         fdee2dfb1562c66e3673990157e392d7af7d99bb9cae477dd63647bdb6a7cbcb
-firmware-factory.bin   0a79ff33c782e80d78e61978cee61ec2f93a0c7711fdbdbeb6ab312bb1e18762
-firmware.bin           edfdca8fad896bd0e4045ec019eb5bfe8bfcb73105ecf8f7eb8d2ac836c260af
+firmware-factory.bin   954c8ea0cdc890efb11d644baeb7013d600c72ca677f7e7e4f18825ad3156438
+firmware.bin           78ba0bc6958c5c4011ef3b97eb3ce333da6eb7e911ae0119959484735b7c799e
 ota_data_initial.bin   7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f
 partitions.bin         0e4ae97e72746c559529154007a256e26158230263cb43cfca415525ef9c9489
 esptool.exe            a939e28fe2fbb53e65e46f0246a4d71b9fd6c052ef0e046182df4a4fe8bec946

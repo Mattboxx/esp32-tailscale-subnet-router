@@ -88,6 +88,7 @@ static void load_config(ntfy_integration_config_t *c)
     if (nvs_param_get_u8("ntfy_down", &b) == ESP_OK) c->commands_only_when_tailscale_down = b != 0;
     if (nvs_param_get_u8("ntfy_mac", &b) == ESP_OK) c->allow_direct_mac = b != 0;
     if (nvs_param_get_u8("ntfy_info", &b) == ESP_OK) c->info_enabled = b != 0;
+    if (nvs_param_get_u8("ntfy_infdet", &b) == ESP_OK) c->info_include_details = b != 0;
     if (nvs_param_get_u16("ntfy_delay", &u16) == ESP_OK) c->failure_delay_seconds = u16;
     if (nvs_param_get_u16("ntfy_poll", &u16) == ESP_OK) c->poll_interval_seconds = u16;
     load_string("ntfy_srv", c->server, sizeof c->server);
@@ -191,57 +192,71 @@ static void send_info(const ntfy_integration_config_t *c)
     wifi_ap_record_t ap = {0};
     bool uplink = sta && esp_netif_get_ip_info(sta, &ip) == ESP_OK && ip.ip.addr;
     bool have_ap = esp_wifi_sta_get_ap_info(&ap) == ESP_OK;
-    appendf(text, 8192, "\nUplink: %s\nWiFi SSID: %s\nLocal IP: " IPSTR
-            "\nNetmask: " IPSTR "\nGateway: " IPSTR "\nRSSI: %d dBm\n",
-            uplink ? "connected" : "disconnected", have_ap ? (char *)ap.ssid : "",
-            IP2STR(&ip.ip), IP2STR(&ip.netmask), IP2STR(&ip.gw), have_ap ? ap.rssi : 0);
+    appendf(text, 8192, "\nUplink: %s\nRSSI: %d dBm\n",
+            uplink ? "connected" : "disconnected", have_ap ? ap.rssi : 0);
+    if (c->info_include_details) {
+        appendf(text, 8192, "WiFi SSID: %s\nLocal IP: " IPSTR
+                "\nNetmask: " IPSTR "\nGateway: " IPSTR "\n",
+                have_ap ? (char *)ap.ssid : "", IP2STR(&ip.ip),
+                IP2STR(&ip.netmask), IP2STR(&ip.gw));
+    }
 
     bool ts = tailscale_is_connected();
     ip4_addr_t ts_ip = {.addr = tailscale_tunnel_ip};
-    appendf(text, 8192, "\nTailscale: %s (enabled: %s)\nTailscale IP: " IPSTR
-            "\nAdvertised IPv4 routes: %s\nAccept peer routes: %s\nSource NAT: %s\n",
-            ts ? "connected" : "disconnected", tailscale_enabled ? "yes" : "no",
-            IP2STR(&ts_ip), tailscale_advertise_routes ? tailscale_advertise_routes : "",
-            tailscale_accept_routes ? "yes" : "no", tailscale_snat_subnet_routes ? "yes" : "no");
+    appendf(text, 8192, "\nTailscale: %s (enabled: %s)\n",
+            ts ? "connected" : "disconnected", tailscale_enabled ? "yes" : "no");
     microlink_t *ml = tailscale_get_microlink();
     int peers = ml ? microlink_get_peer_count(ml) : 0;
     appendf(text, 8192, "Peers (%d):\n", peers);
-    for (int i = 0; i < peers; i++) {
-        microlink_peer_info_t p = {0};
-        if (microlink_get_peer_info(ml, i, &p) != ESP_OK) continue;
-        appendf(text, 8192, "- %s %u.%u.%u.%u %s via %s\n", p.hostname,
-                (p.vpn_ip >> 24) & 255, (p.vpn_ip >> 16) & 255,
-                (p.vpn_ip >> 8) & 255, p.vpn_ip & 255,
-                p.online ? "online" : "offline", p.direct_path ? "direct" : "DERP");
+    if (c->info_include_details) {
+        appendf(text, 8192, "Tailscale IP: " IPSTR
+                "\nAdvertised IPv4 routes: %s\nAccept peer routes: %s\nSource NAT: %s\n",
+                IP2STR(&ts_ip), tailscale_advertise_routes ? tailscale_advertise_routes : "",
+                tailscale_accept_routes ? "yes" : "no", tailscale_snat_subnet_routes ? "yes" : "no");
+        for (int i = 0; i < peers; i++) {
+            microlink_peer_info_t p = {0};
+            if (microlink_get_peer_info(ml, i, &p) != ESP_OK) continue;
+            appendf(text, 8192, "- %s %u.%u.%u.%u %s via %s\n", p.hostname,
+                    (p.vpn_ip >> 24) & 255, (p.vpn_ip >> 16) & 255,
+                    (p.vpn_ip >> 8) & 255, p.vpn_ip & 255,
+                    p.online ? "online" : "offline", p.direct_path ? "direct" : "DERP");
+        }
     }
 
     fourvia6_status_t v6;
     fourvia6_get_status(&v6);
-    appendf(text, 8192, "\n4via6: %s\nLAN: %s\nSite ID: %u\nPrefix: %s\nFlows: %lu\n",
-            v6.enabled ? "enabled" : "disabled", v6.lan_cidr, v6.site_id,
-            v6.advertised_prefix, (unsigned long)v6.active_flows);
+    appendf(text, 8192, "\n4via6: %s\nFlows: %lu\n",
+            v6.enabled ? "enabled" : "disabled", (unsigned long)v6.active_flows);
+    if (c->info_include_details) {
+        appendf(text, 8192, "LAN: %s\nSite ID: %u\nPrefix: %s\n",
+                v6.lan_cidr, v6.site_id, v6.advertised_prefix);
+    }
     wifi_sta_list_t clients = {0};
     int clients_n = wifi_ap_runtime_enabled() && esp_wifi_ap_get_sta_list(&clients) == ESP_OK
                     ? clients.num : 0;
     appendf(text, 8192, "\nAccess point: %s (policy: %s)\nConnected AP devices: %d\n",
             wifi_ap_runtime_enabled() ? "enabled" : "disabled",
             wifi_ap_policy_auto_off() ? "standby while uplink is connected" : "always available", clients_n);
-    for (int i = 0; i < clients_n; i++) {
-        uint8_t *m = clients.sta[i].mac;
-        appendf(text, 8192, "- %02x:%02x:%02x:%02x:%02x:%02x RSSI %d dBm\n",
-                m[0],m[1],m[2],m[3],m[4],m[5], clients.sta[i].rssi);
+    if (c->info_include_details) {
+        for (int i = 0; i < clients_n; i++) {
+            uint8_t *m = clients.sta[i].mac;
+            appendf(text, 8192, "- %02x:%02x:%02x:%02x:%02x:%02x RSSI %d dBm\n",
+                    m[0],m[1],m[2],m[3],m[4],m[5], clients.sta[i].rssi);
+        }
     }
     mqtt_integration_config_t mqtt;
     mqtt_integration_get_config(&mqtt);
     appendf(text, 8192, "\nMQTT: %s / %s\nSaved WOL devices: %d\n",
             mqtt_integration_connected() ? "connected" : "disconnected",
             mqtt.enabled ? "enabled" : "disabled", wol_count());
-    for (int i = 0; i < wol_count(); i++) {
-        wol_device_t w;
-        char mac[18];
-        if (!wol_get(i, &w)) continue;
-        wol_format_mac(w.mac, mac);
-        appendf(text, 8192, "- %s (%s)\n", w.name[0] ? w.name : "unnamed", mac);
+    if (c->info_include_details) {
+        for (int i = 0; i < wol_count(); i++) {
+            wol_device_t w;
+            char mac[18];
+            if (!wol_get(i, &w)) continue;
+            wol_format_mac(w.mac, mac);
+            appendf(text, 8192, "- %s (%s)\n", w.name[0] ? w.name : "unnamed", mac);
+        }
     }
     /* ntfy messages are limited in size. Send deterministic chunks; no chunk
      * contains passwords, WiFi keys, Tailscale keys, or broker/ntfy tokens. */
@@ -458,6 +473,7 @@ esp_err_t ntfy_integration_set_config(const ntfy_integration_config_t *c)
     SAVE_U8("ntfy_down", c->commands_only_when_tailscale_down);
     SAVE_U8("ntfy_mac", c->allow_direct_mac);
     SAVE_U8("ntfy_info", c->info_enabled);
+    SAVE_U8("ntfy_infdet", c->info_include_details);
     SAVE_STR("ntfy_srv", c->server); SAVE_STR("ntfy_topic", c->topic);
     SAVE_STR("ntfy_token", c->token);
 #undef SAVE_U8

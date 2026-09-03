@@ -5,9 +5,8 @@ after the original test_lib was written:
   deliberate SW reboot (the recorder shifts the prior boot to hist[1]).
 * /api/log/precrash endpoint: shape only — content depends on whether
   the previous boot crashed, so we just check the JSON keys.
-* OTA: /api/system carries an ota{} block; POST round-trips the
-  auto-poll + interval; /api/system/ota/poll responds with a status
-  string (typically "github http 404" until a release is published).
+* Privacy-fork OTA surface: manual authenticated image upload is covered by
+  the dedicated update flow; removed GitHub polling endpoints must stay gone.
 * STA TTL override: /api/network round-trip on sta_ttl_override.
 * 4via6 and ntfy API shape, including the write-only ntfy token contract.
 * About card sanity — the SPA exposes the version + Tailscale stack
@@ -22,7 +21,7 @@ import time
 from .common import Context, Result, SpaClient, check, skip
 
 MODULE_ID = "system_extras"
-MODULE_DESC = "reset_history + precrash + OTA + STA TTL + 4via6 + ntfy + About"
+MODULE_DESC = "reset_history + precrash + privacy OTA + STA TTL + 4via6 + ntfy + About"
 
 
 def _system(spa: SpaClient) -> dict:
@@ -60,41 +59,14 @@ def run(ctx: Context) -> list[Result]:
                   isinstance(top, dict) and keys.issubset(top.keys()),
                   f"keys={sorted(top.keys()) if isinstance(top,dict) else top!r}")
 
-        # ---------------- ota{} block ----------------
-        ota = sys.get("ota")
-        check(results, MODULE_ID, "ota{} block present",
-              isinstance(ota, dict),
-              f"got {ota!r}")
-        if isinstance(ota, dict):
-            ota_keys = {"auto_enabled", "poll_s", "last_check", "last_version", "last_status"}
-            check(results, MODULE_ID, "ota{} has expected keys",
-                  ota_keys.issubset(ota.keys()),
-                  f"keys={sorted(ota.keys())}")
-            saved_ota = dict(ota)
-            new_ota = {"auto_enabled": not bool(ota.get("auto_enabled")),
-                       "poll_s": 86400}
-            check(results, MODULE_ID, "POST /api/system ota round-trip",
-                  _post_ok(spa, "/api/system", {"ota": new_ota}),
-                  "")
-            time.sleep(0.5)
-            sys2 = _system(spa)
-            ota2 = sys2.get("ota") or {}
-            check(results, MODULE_ID, "ota.auto_enabled toggled",
-                  bool(ota2.get("auto_enabled")) == new_ota["auto_enabled"],
-                  f"got {ota2.get('auto_enabled')}")
-            # Restore
-            _post_ok(spa, "/api/system", {"ota": {
-                "auto_enabled": bool(saved_ota.get("auto_enabled")),
-                "poll_s": saved_ota.get("poll_s") or 21600
-            }})
-
-        # ---------------- /api/system/ota/poll ----------------
+        # ---------------- privacy OTA surface ----------------
+        check(results, MODULE_ID, "automatic update metadata absent",
+              "ota" not in sys,
+              "the privacy fork must not restore release polling state")
         r = spa.post_json("/api/system/ota/poll", {})
-        ok = isinstance(r, dict) and r.get("__http_status") == 200
-        body = (r or {}).get("__body") or ""
-        check(results, MODULE_ID, "/api/system/ota/poll responds",
-              ok and "status" in body,
-              f"http={r.get('__http_status')} body={body[:120]!r}")
+        check(results, MODULE_ID, "automatic update polling endpoint absent",
+              isinstance(r, dict) and r.get("__http_status") in {404, 405},
+              f"http={(r or {}).get('__http_status')}")
 
         # ---------------- /api/log/precrash ----------------
         pc = spa.fetch_json("/api/log/precrash") or {}

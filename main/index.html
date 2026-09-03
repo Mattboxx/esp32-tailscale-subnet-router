@@ -2658,6 +2658,7 @@
             <div class="form-group"><label class="form-label" for="mqtt-uri">Broker URI</label><input class="input mono" id="mqtt-uri" placeholder="mqtt://192.168.1.10:1883"></div>
             <div class="form-group"><label class="form-label" for="mqtt-topic">Base topic</label><input class="input mono" id="mqtt-topic" placeholder="esp32-router/a1b2c3"></div>
           </div>
+          <div class="alert alert-warning" id="mqtt-transport-warning" style="display:none; margin-bottom:var(--sp-4);">Plaintext MQTT exposes status, credentials and commands to anyone able to observe this network. Prefer <code class="mono">mqtts://</code> or <code class="mono">wss://</code>; use plaintext only on an isolated trusted LAN.</div>
           <div class="grid grid-cols-2">
             <div class="form-group"><label class="form-label" for="mqtt-user">Username</label><input class="input" id="mqtt-user" autocomplete="username"></div>
             <div class="form-group"><label class="form-label" for="mqtt-password">Password</label><input class="input" type="password" id="mqtt-password" autocomplete="new-password" placeholder="Leave empty to keep current"><label class="form-hint" style="display:flex; gap:0.35rem; align-items:center;"><input type="checkbox" id="mqtt-password-clear"> Clear saved password</label></div>
@@ -2707,13 +2708,15 @@
             <div class="form-group"><label class="form-label" for="ntfy-server">Server URL</label><input class="input mono" id="ntfy-server" value="https://ntfy.sh"></div>
             <div class="form-group"><label class="form-label" for="ntfy-topic">Topic</label><input class="input mono" id="ntfy-topic" placeholder="private-random-topic"></div>
           </div>
+          <div class="alert alert-warning" id="ntfy-transport-warning" style="display:none; margin-bottom:var(--sp-4);">Plain HTTP exposes the ntfy token, notifications and remote commands in transit. Prefer <code class="mono">https://</code>.</div>
           <div class="form-group"><label class="form-label" for="ntfy-token">Access token</label><input class="input" type="password" id="ntfy-token" autocomplete="new-password" placeholder="Optional — leave empty to keep"><label class="form-hint" style="display:flex;gap:0.35rem;align-items:center;"><input type="checkbox" id="ntfy-token-clear"> Clear saved token</label></div>
           <div class="grid grid-cols-2">
             <div class="form-group"><label class="feature-switch"><input type="checkbox" id="ntfy-alerts"><span class="feature-switch-track" aria-hidden="true"></span><span>Alert when internet works but Tailscale stays down</span></label><div class="feature-inline-dependent" id="ntfy-alert-settings"><label class="form-label" for="ntfy-delay" style="margin-top:0.5rem;">Failure delay (seconds)</label><input class="input mono" type="number" id="ntfy-delay" min="15" max="3600" value="120"></div></div>
             <div class="form-group"><label class="feature-switch"><input type="checkbox" id="ntfy-commands"><span class="feature-switch-track" aria-hidden="true"></span><span>Receive remote commands</span></label><div class="feature-inline-dependent" id="ntfy-command-settings"><label class="form-label" for="ntfy-poll" style="margin-top:0.5rem;">Poll interval (seconds)</label><input class="input mono" type="number" id="ntfy-poll" min="5" max="300" value="15"></div></div>
           </div>
           <div class="form-group"><label class="feature-switch"><input type="checkbox" id="ntfy-down-only"><span class="feature-switch-track" aria-hidden="true"></span><span>Poll commands only while Tailscale is down</span></label></div>
-          <div class="form-group"><label class="feature-switch"><input type="checkbox" id="ntfy-info"><span class="feature-switch-track" aria-hidden="true"></span><span>Allow <code class="mono">info</code> command</span></label><span class="form-hint">Replies on the same topic with operational state, local/tailnet IPs, peers, AP clients and saved WOL targets. Credentials and tokens are always excluded.</span></div>
+          <div class="form-group"><label class="feature-switch"><input type="checkbox" id="ntfy-info"><span class="feature-switch-track" aria-hidden="true"></span><span>Allow <code class="mono">info</code> command</span></label><span class="form-hint">Replies with operational state and counts. Credentials and tokens are always excluded.</span></div>
+          <div class="form-group feature-inline-dependent" id="ntfy-info-details-setting"><label class="feature-switch"><input type="checkbox" id="ntfy-info-details"><span class="feature-switch-track" aria-hidden="true"></span><span>Include private network details in <code class="mono">info</code></span></label><span class="form-hint">Off by default. Enabling this includes SSID, IPs, routes, peer names, AP-client MACs and saved WOL targets in ntfy messages.</span></div>
           <div class="form-group"><label class="feature-switch"><input type="checkbox" id="ntfy-direct-mac"><span class="feature-switch-track" aria-hidden="true"></span><span>Allow <code class="mono">wol aa:bb:cc:dd:ee:ff</code> for unsaved MAC addresses</span></label><span class="form-hint">When off, <code class="mono">wol DEVICE_NAME</code> and saved MAC addresses still work.</span></div>
           <div class="form-hint mono" id="ntfy-status">Commands: info · wol DEVICE_NAME · wol aa:bb:cc:dd:ee:ff</div>
         </div>
@@ -6446,6 +6449,13 @@
       if (btn) btn.addEventListener('click', loadDiag);
     })();
 
+    function syncMqttTransportWarning() {
+      var enabled = document.getElementById('mqtt-enabled').checked;
+      var uri = document.getElementById('mqtt-uri').value.trim().toLowerCase();
+      document.getElementById('mqtt-transport-warning').style.display =
+        enabled && (/^(mqtt|ws):\/\//.test(uri)) ? 'flex' : 'none';
+    }
+
     function renderMqttState(d, wolDevices) {
       var badge = document.getElementById('mqtt-badge');
       if (!d.enabled) {
@@ -6458,6 +6468,7 @@
       document.getElementById('mqtt-enabled').checked = !!d.enabled;
       setFeatureCardState('mqtt-card', !!d.enabled);
       document.getElementById('mqtt-uri').value = d.uri || '';
+      syncMqttTransportWarning();
       document.getElementById('mqtt-topic').value = d.base_topic || '';
       document.getElementById('mqtt-user').value = d.username || '';
       document.getElementById('mqtt-password').value = '';
@@ -6518,6 +6529,7 @@
           setFeatureCardState('mqtt-card', mqttEnabled);
           document.getElementById('mqtt-publish').disabled = !mqttEnabled;
         }
+        if (id === 'mqtt-enabled' || id === 'mqtt-uri') syncMqttTransportWarning();
         if (id === 'mqtt-enabled' || id === 'mqtt-ha-enabled')
           setFeatureDependentState('mqtt-ha-settings', mqttEnabled && document.getElementById('mqtt-ha-enabled').checked);
         if (id === 'mqtt-enabled' || id === 'mqtt-watchdog-enabled')
@@ -6595,6 +6607,10 @@
       setFeatureCardState('ntfy-card', enabled);
       setFeatureDependentState('ntfy-alert-settings', enabled && document.getElementById('ntfy-alerts').checked);
       setFeatureDependentState('ntfy-command-settings', enabled && document.getElementById('ntfy-commands').checked);
+      setFeatureDependentState('ntfy-info-details-setting', enabled && document.getElementById('ntfy-info').checked);
+      var server = document.getElementById('ntfy-server').value.trim().toLowerCase();
+      document.getElementById('ntfy-transport-warning').style.display =
+        enabled && /^http:\/\//.test(server) ? 'flex' : 'none';
       document.getElementById('ntfy-test').disabled = !enabled;
     }
 
@@ -6614,6 +6630,7 @@
         document.getElementById('ntfy-down-only').checked = !!d.commands_only_when_tailscale_down;
         document.getElementById('ntfy-direct-mac').checked = !!d.allow_direct_mac;
         document.getElementById('ntfy-info').checked = !!d.info_enabled;
+        document.getElementById('ntfy-info-details').checked = !!d.info_include_details;
         document.getElementById('ntfy-delay').value = d.failure_delay_seconds || 120;
         document.getElementById('ntfy-poll').value = d.poll_interval_seconds || 15;
         syncNtfyFeatureStates();
@@ -6628,10 +6645,10 @@
       });
     }
     ['ntfy-enabled','ntfy-server','ntfy-topic','ntfy-token','ntfy-token-clear','ntfy-alerts',
-     'ntfy-commands','ntfy-down-only','ntfy-direct-mac','ntfy-info','ntfy-delay','ntfy-poll'].forEach(function(id) {
+     'ntfy-commands','ntfy-down-only','ntfy-direct-mac','ntfy-info','ntfy-info-details','ntfy-delay','ntfy-poll'].forEach(function(id) {
       var el=document.getElementById(id);
       el.addEventListener(el.type === 'checkbox' ? 'change' : 'input', function() {
-        if (id === 'ntfy-enabled' || id === 'ntfy-alerts' || id === 'ntfy-commands')
+        if (id === 'ntfy-enabled' || id === 'ntfy-server' || id === 'ntfy-alerts' || id === 'ntfy-commands' || id === 'ntfy-info')
           syncNtfyFeatureStates();
         document.getElementById('ntfy-save').disabled=false;
       });
@@ -6662,6 +6679,7 @@
         commands_only_when_tailscale_down:document.getElementById('ntfy-down-only').checked,
         allow_direct_mac:document.getElementById('ntfy-direct-mac').checked,
         info_enabled:document.getElementById('ntfy-info').checked,
+        info_include_details:document.getElementById('ntfy-info-details').checked,
         failure_delay_seconds:parseInt(document.getElementById('ntfy-delay').value,10),
         poll_interval_seconds:parseInt(document.getElementById('ntfy-poll').value,10)
       };

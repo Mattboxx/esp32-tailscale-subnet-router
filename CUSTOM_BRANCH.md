@@ -29,7 +29,8 @@ connected board.
 - Graphical on/off switches and visibly dimmed disabled cards/settings for AP,
   Tailscale, 4via6, MQTT, Home Assistant, watchdog, ntfy and web authentication.
 - Optional web password gate and session timeout. Passwords of at least four
-  characters are accepted, with a visible warning for weak choices.
+  characters are accepted, with a visible warning for weak choices. Password
+  verifiers use salted PBKDF2-HMAC-SHA256 and legacy records upgrade on login.
 - Manual local OTA upload and explicit privacy/outbound-traffic reporting.
 
 ## Removed from upstream main
@@ -48,8 +49,11 @@ older upstream releases. The source is deleted and not linked into the firmware.
 - Persistent warning logs omit peer names, key prefixes, private endpoint IPs
   and endpoint ports.
 - The remote TCP console refuses to start without a configured admin password.
-- Login attempts are rate-limited per client; initial password setup is only
+- Login attempts are rate-limited across a larger per-client guard table;
+  initial password setup is only
   accepted through the ESP's own access point.
+- The web page sends CSP, anti-framing, MIME-sniffing, referrer, permissions
+  and same-origin resource-policy headers.
 - Dynamic toast text is inserted as text rather than HTML, preventing stored or
   reflected script injection through device names and server error messages.
 - HTTP request bodies are read completely before JSON parsing instead of
@@ -61,6 +65,10 @@ older upstream releases. The source is deleted and not linked into the firmware.
 - Secrets, OTA, factory reset, crash trigger and Tailscale identity reset always
   require a password-authenticated session, even when the UI gate is disabled.
 - The compiled image contains no fixed telemetry, update or speed-test target.
+- ntfy `info` replies omit SSIDs, addresses, routes, peer identities, client
+  MACs and WOL target details unless the operator explicitly enables them.
+- The UI shows an inline security warning whenever enabled MQTT or ntfy uses a
+  plaintext transport.
 
 ## Expected outbound traffic
 
@@ -84,7 +92,8 @@ This source audit is not a formal proof; tailnet and broker ACLs remain importan
   generic factory image can be flashed on ordinary boards. Physical access can
   therefore expose saved credentials and replace the firmware.
 - Four-character passwords are accepted by operator choice. Online guesses are
-  throttled, but a strong unique password is still recommended.
+  throttled and offline guesses are slowed with PBKDF2, but a strong unique
+  password is still recommended.
 - MQTT/ntfy commands trust the configured broker/server, token and topic. Prefer
   TLS transports, private random topics and restrictive ACLs.
 

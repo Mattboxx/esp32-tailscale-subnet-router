@@ -83,8 +83,28 @@ static const char *TAG = "web_ui";
 extern const char   index_html_gz_start[];
 extern const size_t index_html_gz_len;
 
+/* Browser-facing hardening.  The UI is intentionally a single embedded page,
+ * so it needs no third-party frames, objects, forms, scripts or network
+ * destinations. Inline script/style remain necessary until the SPA is split
+ * into separate embedded assets. */
+static void set_browser_security_headers(httpd_req_t *req)
+{
+    httpd_resp_set_hdr(req, "Content-Security-Policy",
+                       "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+                       "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+                       "connect-src 'self'; object-src 'none'; base-uri 'none'; "
+                       "frame-ancestors 'none'; form-action 'self'");
+    httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
+    httpd_resp_set_hdr(req, "X-Frame-Options", "DENY");
+    httpd_resp_set_hdr(req, "Referrer-Policy", "no-referrer");
+    httpd_resp_set_hdr(req, "Permissions-Policy",
+                       "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
+    httpd_resp_set_hdr(req, "Cross-Origin-Resource-Policy", "same-origin");
+}
+
 static esp_err_t index_handler(httpd_req_t *req)
 {
+    set_browser_security_headers(req);
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
     /* Without this the browser happily reuses last session's SPA HTML
@@ -1962,6 +1982,7 @@ static esp_err_t ntfy_handler(httpd_req_t *req)
                           c.commands_only_when_tailscale_down);
     cJSON_AddBoolToObject(root, "allow_direct_mac", c.allow_direct_mac);
     cJSON_AddBoolToObject(root, "info_enabled", c.info_enabled);
+    cJSON_AddBoolToObject(root, "info_include_details", c.info_include_details);
     cJSON_AddNumberToObject(root, "failure_delay_seconds", c.failure_delay_seconds);
     cJSON_AddNumberToObject(root, "poll_interval_seconds", c.poll_interval_seconds);
     cJSON_AddBoolToObject(root, "last_publish_ok", st.last_publish_ok);
@@ -2001,6 +2022,7 @@ static esp_err_t ntfy_save_handler(httpd_req_t *req)
     NTFY_BOOL("commands_enabled", c.commands_enabled);
     NTFY_BOOL("commands_only_when_tailscale_down", c.commands_only_when_tailscale_down);
     NTFY_BOOL("allow_direct_mac", c.allow_direct_mac); NTFY_BOOL("info_enabled", c.info_enabled);
+    NTFY_BOOL("info_include_details", c.info_include_details);
 #undef NTFY_STRING
 #undef NTFY_BOOL
     item=cJSON_GetObjectItem(root,"failure_delay_seconds");
@@ -4162,7 +4184,7 @@ typedef struct {
     uint64_t last_seen_us;
 } login_guard_t;
 
-#define LOGIN_GUARD_SLOTS 4
+#define LOGIN_GUARD_SLOTS 16
 static login_guard_t s_login_guards[LOGIN_GUARD_SLOTS];
 
 static uint32_t request_peer_ipv4(httpd_req_t *req)

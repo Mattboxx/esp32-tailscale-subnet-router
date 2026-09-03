@@ -1,7 +1,8 @@
 /* Web interface password — set, verify, query.
  *
- * Storage: NVS key "web_password" under the project namespace, formatted
- * as "salt_hex:hash_hex" (16-byte salt + SHA-256 of salt||plaintext).
+ * Storage: NVS key "web_password" under the project namespace. New values
+ * use versioned PBKDF2-HMAC-SHA256 records; legacy salt+SHA-256 records are
+ * transparently upgraded after the next successful verification.
  *
  * SPDX-License-Identifier: MIT
  */
