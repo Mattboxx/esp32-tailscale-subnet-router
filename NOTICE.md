@@ -1,6 +1,7 @@
 # Third-party notices
 
-This project (`esp32-tailscale-subnet-router`) is licensed under the
+This project (`esp32-tailscale-gateway`, forked from
+`esp32-tailscale-subnet-router`) is licensed under the
 [MIT License](LICENSE), Copyright (c) 2026 Csontikka.
 
 It incorporates the following third-party components, each under its own

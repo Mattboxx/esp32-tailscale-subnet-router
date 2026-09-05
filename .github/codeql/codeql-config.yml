@@ -1,4 +1,4 @@
-name: "esp32-tailscale-subnet-router CodeQL config"
+name: "esp32-tailscale-gateway CodeQL config"
 
 # Focus the analysis on FIRST-PARTY code (the firmware in main/ + components/,
 # and the Python tooling). Exclude vendored / generated / non-source trees:

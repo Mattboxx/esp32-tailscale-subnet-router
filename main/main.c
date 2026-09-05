@@ -724,7 +724,8 @@ esp_netif_t *wifi_init_sta(void)
         } else {
             /* A setup-mode device must leave STA idle.  Connecting to the
              * Kconfig example SSID both wastes airtime and blocks WiFi scans. */
-            wifi_config_t empty = {0};
+            wifi_config_t empty;
+            memset(&empty, 0, sizeof empty);
             ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &empty));
             ESP_LOGI(TAG_STA, "wifi_init_sta: no networks saved; STA left idle for setup");
         }

@@ -1,4 +1,4 @@
-"""Functional-test catalog for esp32-tailscale-subnet-router.
+"""Functional-test catalog for ESP32 Tailscale Gateway.
 
 Each module under this package exposes:
     MODULE_ID  = "<short-name>"

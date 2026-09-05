@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Functional-test runner for esp32-tailscale-subnet-router.
+"""Functional-test runner for ESP32 Tailscale Gateway.
 
 Usage:
     python tools/run_tests.py                   # run every module

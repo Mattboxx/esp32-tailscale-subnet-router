@@ -14,20 +14,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 2
+          fetch-depth: 1
 
-      - name: Get changed files
+      - name: Get every tracked file
         id: changed
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            # On pull_request events HEAD is the PR merge commit; its first
-            # parent is the base tip, and fetch-depth: 2 guarantees both
-            # parents are present. origin/<base_ref> is NOT fetched on a
-            # shallow checkout, so diffing against it exits 128.
-            FILES=$(git diff --name-only HEAD^1 HEAD)
-          else
-            FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || git ls-files)
-          fi
+          # The repository is small. Scanning the full tip avoids the blind
+          # spot where a multi-commit push introduces a secret in an earlier
+          # commit and the last commit does not touch that file.
+          FILES=$(git ls-files)
           echo "files<<EOF" >> "$GITHUB_OUTPUT"
           echo "$FILES" >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"

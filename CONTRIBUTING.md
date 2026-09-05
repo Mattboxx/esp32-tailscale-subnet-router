@@ -32,7 +32,7 @@ pio device monitor -b 115200
 The `external/microlink` submodule (the Tailscale/WireGuard stack) is required:
 
 ```sh
-git clone --recurse-submodules https://github.com/Csontikka/esp32-tailscale-subnet-router
+git clone --recurse-submodules https://github.com/Mattboxx/esp32-tailscale-gateway
 # or, in an existing clone:
 git submodule update --init --recursive
 ```

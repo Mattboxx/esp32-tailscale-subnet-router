@@ -69,6 +69,9 @@ older upstream releases. The source is deleted and not linked into the firmware.
 - Login attempts are rate-limited across a larger per-client guard table;
   initial password setup is only
   accepted through the ESP's own access point.
+- Changing the stored password uses the same progressive per-client rate
+  limit even when the ordinary web password gate is disabled, and plaintext
+  password buffers are wiped after web or remote-console verification.
 - The web page sends CSP, anti-framing, MIME-sniffing, referrer, permissions
   and same-origin resource-policy headers.
 - Dynamic toast text is inserted as text rather than HTML, preventing stored or
@@ -86,6 +89,9 @@ older upstream releases. The source is deleted and not linked into the firmware.
   MACs and WOL target details unless the operator explicitly enables them.
 - The UI shows an inline security warning whenever enabled MQTT or ntfy uses a
   plaintext transport.
+- MQTT and ntfy base URLs reject embedded credentials and control characters;
+  passwords/tokens must use their separate write-only fields and cannot leak
+  through a displayed or logged URL.
 
 ## Expected outbound traffic
 

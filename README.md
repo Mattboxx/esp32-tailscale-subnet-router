@@ -2,14 +2,25 @@
 
 <img src="assets/logo/banner.png" alt="Tailscale Subnet Router for ESP32-S3" width="100%">
 
-# ESP32 Tailscale Subnet Router
+# ESP32 Tailscale Gateway
 
-**A pocket-sized WiFi NAT router *and* Tailscale subnet router on a single ESP32-S3 — built to put low-bandwidth IoT devices on your tailnet, no extra hardware, configured entirely from a built-in web UI.**
+### Subnet router · LAN → Tailnet port forwarder · IoT WiFi gateway · MQTT/Home Assistant · Wake-on-LAN
+
+**Turn a single ESP32-S3 into a pocket-sized, privacy-first gateway between your
+LAN, isolated WiFi devices and an entire Tailscale or Headscale network — no
+Raspberry Pi, public port or client software on the connected devices.**
+
+Based on the original
+[Csontikka/esp32-tailscale-subnet-router](https://github.com/Csontikka/esp32-tailscale-subnet-router)
+and its [microlink](https://github.com/Csontikka/microlink) Tailscale stack.
+This Mattboxx edition expands the project with automation, selective service
+forwarding, privacy hardening and a ready-to-flash release.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform: ESP32-S3](https://img.shields.io/badge/platform-ESP32--S3-7c3aed.svg)](#hardware)
 [![ESP-IDF](https://img.shields.io/badge/ESP--IDF-5.3.1-e7352c.svg)](https://docs.espressif.com/projects/esp-idf/)
-[![CodeQL](https://github.com/Mattboxx/esp32-tailscale-subnet-router/actions/workflows/codeql.yml/badge.svg)](https://github.com/Mattboxx/esp32-tailscale-subnet-router/actions/workflows/codeql.yml)
+[![CodeQL](https://github.com/Mattboxx/esp32-tailscale-gateway/actions/workflows/codeql.yml/badge.svg)](https://github.com/Mattboxx/esp32-tailscale-gateway/actions/workflows/codeql.yml)
+[![Latest release](https://img.shields.io/github/v/release/Mattboxx/esp32-tailscale-gateway?label=ready-to-flash)](../../releases/latest)
 [![GitHub Sponsors](https://img.shields.io/badge/GitHub-Sponsor-ea4aaa.svg?style=plastic&logo=githubsponsors)](https://github.com/sponsors/Csontikka)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-donate-yellow.svg?style=plastic)](https://buymeacoffee.com/csontikka)
 
@@ -17,27 +28,50 @@
 
 ---
 
-## Mattboxx edition — read this first
+## One board, three network gateways
 
-This is the `0.1.19-Mattboxx-1.2` fork, based on upstream `v0.1.19` and built and
-flashed on a real ESP32-S3 N16R8. It is intentionally different from upstream:
+| Traffic path | What it unlocks |
+|---|---|
+| **Tailnet → LAN/AP subnet** | Reach sensors, switches and legacy devices remotely through the ESP32 subnet router. |
+| **AP-side device → Tailnet/Internet** | Give devices with no VPN client their own simple WiFi gateway, optionally through a Tailscale exit node. |
+| **Uplink LAN → Tailnet service** | Let an ordinary LAN device reach a selected TCP/UDP service on a Tailnet peer through the ESP32 — no Tailscale client and no ESP access-point connection required. |
 
-- adds a standby/always-available client WiFi policy, WOL address book, MQTT and extensive
-  Home Assistant controls, optional 4via6, optional ntfy alerts/commands, and
-  independent uplink-LAN → Tailnet service forwarding;
-- fixes WiFi scan/save failures (including HTTP 431), the ntfy command-poll
-  reboot loop, and commands silently missed between polls;
-- removes telemetry, external log/crash uploads, automatic GitHub update checks,
-  automatic downloads, Cloudflare speed tests and the hard-coded DNS fallback;
-- ships a ready-to-flash Windows ZIP and a single factory image in each release.
+Example: forward `ESP-LAN-IP:2222` to `tailnet-server:22`, then SSH from any
+permitted local client. Each rule has its own source CIDR, protocol, ports,
+enable switch, counters and live status. This is completely independent from
+the existing AP-side port forwarding.
 
-See **[the complete added/removed/security comparison](CUSTOM_BRANCH.md)** before
-installing. This remains a hobby firmware rather than a formally audited network
-appliance; see [Known limitations](#known-limitations).
+**[Download the ready-to-flash release](../../releases/latest)** ·
+**[See every change from upstream](CUSTOM_BRANCH.md)** ·
+**[Read the security model](SECURITY.md)**
+
+## Why the Mattboxx edition is different
+
+Version `0.1.19-Mattboxx-1.3` is based on upstream `v0.1.19`. This firmware line
+is developed, flashed and end-to-end tested on a real ESP32-S3 N16R8; every
+release is also compiled and statically checked before publication.
+
+| Area | Added or improved in this edition |
+|---|---|
+| **LAN → Tailnet forwarding** | Multiple TCP/UDP rules to a Tailscale IPv4 or MagicDNS destination, mandatory allowed-source subnet, live resolution/install state and conflict protection. Works even with the ESP client WiFi/AP disabled. |
+| **WiFi gateway policy** | Keep the client AP always available, or automatically place it in standby while the uplink works and restore it after an outage. The dashboard makes disabled state unmistakable. |
+| **Wake-on-LAN** | Save up to 12 named devices and wake them from the web UI, MQTT, Home Assistant or replay-protected ntfy commands. |
+| **MQTT + Home Assistant** | Retained availability and device state, Last Will, broker watchdog, inbound commands and automatic discovery for AP, routes, SNAT, LAN bypass, Tailscale, 4via6, reconnect, restart, WOL and every LAN → Tailnet rule. |
+| **ntfy remote operations** | Optional outage alerts, bounded diagnostic context, `info` replies and WOL commands with durable polling and replay protection. Private details stay hidden unless explicitly enabled. |
+| **Tailscale 4via6** | Optional bidirectional TCP/UDP/ICMP translation for overlapping IPv4 LANs, with calculated advertised prefix, flow counters and Home Assistant controls. |
+| **Web administration** | Responsive dark UI, graphical feature switches, clear disabled cards, configurable web port, optional password gate and session timeout, local OTA and encrypted backup/restore. |
+| **Fast, safer login** | Salted 60,000-round PBKDF2-HMAC-SHA256 verifier plus a one-time browser challenge; no plaintext password for modern records and no multi-second ESP-side unlock delay. |
+| **Reliability fixes** | Repairs WiFi scan/save and HTTP 431 failures, ntfy reboot loops and missed commands, false post-login offline state, forwarding-table startup counts and web/Tailscale socket starvation. |
+| **Privacy cleanup** | Removes anonymous telemetry, external crash/log uploads, automatic GitHub polling/downloads, Cloudflare speed tests and the hard-coded public DNS fallback. |
+| **Easy installation** | Releases include one factory image, one update image and a Windows ZIP with Espressif `esptool` plus guided clean-install/update batch files. No toolchain required. |
+
+The complete technical comparison is in [`CUSTOM_BRANCH.md`](CUSTOM_BRANCH.md).
+This remains community firmware rather than a formally audited network
+appliance; read [Known limitations](#known-limitations) before deployment.
 
 ## What it is
 
-This firmware turns one ESP32-S3 board into two things at once:
+This firmware turns one ESP32-S3 board into three things at once:
 
 1. **A WiFi NAT router.** It joins your existing 2.4 GHz network as a
    client (STA) and re-broadcasts its own access point (AP). The IoT
@@ -48,6 +82,10 @@ This firmware turns one ESP32-S3 board into two things at once:
    devices behind its AP — and the AP-side devices can use the ESP as a
    Tailscale **exit node** gateway. No client software on the IoT
    devices, no cloud account on the LAN.
+3. **A selective Tailnet service gateway.** Ordinary devices on the ESP32's
+   uplink LAN can connect to its LAN address and reach individual services on
+   Tailnet peers. Per-rule source CIDRs expose only the ports you choose,
+   without installing Tailscale on the local client.
 
 Everything — WiFi credentials, the tailnet auth key, advertised routes,
 firewall rules, diagnostics — is configured from a phone or laptop
@@ -210,17 +248,29 @@ Real-world results from the field (see [#9](../../issues/9) and
 > `factory_reset --confirm`, allowing a little extra time before retrying the
 > join. No log survives from the failed first boot, so this is a known rough
 > edge rather than a diagnosed bug. If you hit it, erase the flash and retry.
-> The `factory-full.bin` asset on the
+> The `firmware-factory.bin` asset on the
 > [latest release](../../releases/latest) is a full-flash
 > image and rewrites the NVS region too, so it sidesteps this as well.
 
 ## Quick start
 
-### 1. Build & flash
+### 1. Flash it — no build tools required
+
+Download the latest
+[`ESP32-S3-router-0.1.19-Mattboxx-1.3-windows.zip`](../../releases/latest),
+connect the ESP32-S3 over USB and run one of the included guided batch files:
+
+- `UPDATE_KEEP_SETTINGS.bat` updates an existing installation without erasing its configuration;
+- `CLEAN_INSTALL_ERASE_ALL.bat` performs a fresh installation and removes every old setting.
+
+The release also provides `firmware-factory.bin` for other flashing tools and
+`firmware.bin` for the local web updater.
+
+### Build from source instead
 
 ```bash
-git clone --recurse-submodules https://github.com/Mattboxx/esp32-tailscale-subnet-router
-cd esp32-tailscale-subnet-router
+git clone --recurse-submodules https://github.com/Mattboxx/esp32-tailscale-gateway
+cd esp32-tailscale-gateway
 
 # PlatformIO (recommended)
 pio run -e esp32-s3 -t upload
@@ -388,16 +438,18 @@ exit-node and subnet routing.
 ## How it works
 
 ```
-        Internet
-           │  (upstream 2.4 GHz WiFi, STA)
-     ┌─────┴─────┐
-     │  ESP32-S3 │  NAPT + DHCP + DNS forwarder
-     │  ┌──────┐ │  userspace WireGuard + Tailscale (microlink)
-     │  │ ACL  │ │  exit-node aware route hook
-     └─────┬─────┘
-       AP  │  (2.4 GHz, 192.168.x.0/24 advertised to the tailnet)
-   ┌───────┼────────┐
- sensor  switch  thermostat   ←→  reachable from any tailnet peer
+             Internet                   Tailnet peers/services
+                │                               │
+      ordinary uplink-LAN client ──┐            │ WireGuard / DERP
+                                   ▼            ▼
+                            ┌────────────────────────┐
+                            │       ESP32-S3         │
+                            │ NAPT · DHCP · DNS · ACL│
+                            │ LAN→Tailnet forwarding │
+                            └───────────┬────────────┘
+                                  AP   │  optional IoT gateway
+                              ┌────────┼──────────┐
+                            sensor   switch   thermostat
 ```
 
 > The AP is for **IoT gear** — sensors, switches, low-bandwidth control —
@@ -486,7 +538,7 @@ connections. Diagnostic ping and traceroute run only when explicitly started.
 
 For the complete, explicit comparison with upstream `main`, see
 [`CUSTOM_BRANCH.md`](CUSTOM_BRANCH.md). A ready-to-use Windows flash package is
-available as [`ESP32-S3-router-0.1.19-Mattboxx-1.2-windows.zip`](flash-package/ESP32-S3-router-0.1.19-Mattboxx-1.2-windows.zip);
+available as [`ESP32-S3-router-0.1.19-Mattboxx-1.3-windows.zip`](flash-package/ESP32-S3-router-0.1.19-Mattboxx-1.3-windows.zip);
 instructions are in [`flash-package/README.txt`](flash-package/README.txt).
 
 ## Security
@@ -518,7 +570,7 @@ guidelines, and **[docs/TESTING.md](docs/TESTING.md)** for the test harness.
 ## Support
 
 Found a bug or have an idea? Open an
-[issue](https://github.com/Mattboxx/esp32-tailscale-subnet-router/issues).
+[issue](https://github.com/Mattboxx/esp32-tailscale-gateway/issues).
 If this firmware saved you a router purchase or an afternoon of
 debugging, you can chip in:
 [buy me a coffee](https://buymeacoffee.com/csontikka) ☕ or [sponsor me on GitHub](https://github.com/sponsors/Csontikka)

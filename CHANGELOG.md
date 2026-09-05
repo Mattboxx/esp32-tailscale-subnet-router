@@ -6,6 +6,27 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.1.19-Mattboxx-1.3] — 2026-09-05
+
+### Security
+
+- Rate-limit old-password verification on the password-change endpoint even
+  when the ordinary web login gate is disabled, closing an online guessing
+  path for operators who intentionally expose the rest of the UI.
+- Wipe plaintext password request buffers after first-time setup, password
+  changes and remote-console authentication.
+- Reject credentials and control characters embedded in MQTT/ntfy URLs so a
+  password or token cannot be exposed later through URI diagnostics or logs.
+- Scan every tracked file in the sensitive-data workflow, closing the
+  multi-commit-push blind spot of checking only `HEAD~1`.
+
+### Documentation
+
+- Reworked the project landing page around its three gateway modes, complete
+  Mattboxx feature matrix, privacy improvements and toolchain-free download.
+- Renamed and retagged the GitHub project for clearer ESP32/Tailscale gateway
+  discovery while retaining prominent upstream credit.
+
 ## [0.1.19-Mattboxx-1.2] — 2026-09-04
 
 ### Added

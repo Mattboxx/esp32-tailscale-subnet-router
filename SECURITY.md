@@ -7,7 +7,9 @@ service on the ESP32 uplink address. The firmware requires an allowed-source
 CIDR, rejects non-CGNAT resolved targets, isolates these mappings from the AP
 and WireGuard input interfaces, and rejects listener collisions. Operators
 should still choose the narrowest CIDR, authenticate the destination service,
-and enforce Tailnet ACLs; this is a gateway, not an application firewall.
+and enforce Tailnet ACLs; this is a gateway, not an application firewall. A
+source CIDR is a network filter, not client identity: a hostile device with
+access to the same layer-2 LAN may spoof a permitted source address.
 
 ## Reporting a Vulnerability
 
@@ -18,7 +20,7 @@ web-UI authentication bypass, or any other concern that affects the safety of a
 device running this code — please report it privately rather than opening a
 public issue.
 
-**Preferred channel:** use GitHub's [private vulnerability reporting](https://github.com/Mattboxx/esp32-tailscale-subnet-router/security/advisories/new)
+**Preferred channel:** use GitHub's [private vulnerability reporting](https://github.com/Mattboxx/esp32-tailscale-gateway/security/advisories/new)
 on this repository. This creates a private security advisory that only the
 maintainer and invited collaborators can see.
 
@@ -58,6 +60,10 @@ maintained.
   recovery and compatibility, but a long unique password is strongly advised.
   Password verifiers use salted PBKDF2-HMAC-SHA256; older SHA-256 records are
   upgraded automatically after the next successful login.
+- Disabling the web password gate intentionally trusts every client that can
+  reach the ESP32: ordinary settings, restart, WOL and automation controls are
+  then public. Secret export/import, OTA, identity reset and factory reset
+  still require a real password-backed session.
 - The embedded UI is HTTP-only. Do not forward port 80 to the Internet or an
   untrusted VLAN. Prefer access through a trusted LAN or the encrypted
   Tailscale path, and disable the access point when it is not needed.

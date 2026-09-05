@@ -110,7 +110,12 @@ static bool config_valid(const ntfy_integration_config_t *c)
 {
     if (!c) return false;
     bool server_ok = strncmp(c->server, "https://", 8) == 0
-                  || strncmp(c->server, "http://", 7) == 0;
+                   || strncmp(c->server, "http://", 7) == 0;
+    /* Topic is appended as a path segment, so query/fragment syntax has no
+     * valid role in the base URL. Reject whitespace/control characters and
+     * URI user-info as well: tokens use the write-only Authorization field
+     * and must never become part of a URL that may be logged or returned. */
+    if (strpbrk(c->server, "@?#\r\n\t ") != NULL) server_ok = false;
     return (!c->enabled || (server_ok && topic_valid(c->topic)))
         && c->failure_delay_seconds >= 15 && c->failure_delay_seconds <= 3600
         && c->poll_interval_seconds >= 5 && c->poll_interval_seconds <= 300;

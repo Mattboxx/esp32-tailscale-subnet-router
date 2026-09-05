@@ -1,14 +1,16 @@
 ESP32-S3 ROUTER - WINDOWS FLASH PACKAGE
 =======================================
 
-Firmware: 0.1.19-Mattboxx-1.2
+Firmware: 0.1.19-Mattboxx-1.3
 
-This package contains every Mattboxx improvement through revision 1.2:
+This package contains every Mattboxx improvement through revision 1.3:
 WiFi/setup fixes, selectable AP availability, WOL, MQTT/Home Assistant, ntfy
 commands and monitoring, 4via6, security/privacy hardening, removal of
 telemetry and external log uploads, and the separate LAN-to-Tailnet forwarding
 table. Web-UI unlocks are fast while the strong 60,000-round PBKDF2 verifier
 remains in use after each reboot; the web listener port is also configurable.
+Revision 1.3 also rate-limits password changes when the normal login gate is
+disabled and wipes plaintext password buffers after verification.
 
 Requirements: 64-bit Windows 10/11, an ESP32-S3 connected over USB, and
 every serial monitor closed.

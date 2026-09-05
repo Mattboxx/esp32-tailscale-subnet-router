@@ -1914,10 +1914,14 @@ static esp_err_t mqtt_save_handler(httpd_req_t *req)
     cJSON_Delete(root);
 
     bool valid_uri = !config.enabled
-        || strncmp(config.uri, "mqtt://", 7) == 0
-        || strncmp(config.uri, "mqtts://", 8) == 0
-        || strncmp(config.uri, "ws://", 5) == 0
-        || strncmp(config.uri, "wss://", 6) == 0;
+        || ((strncmp(config.uri, "mqtt://", 7) == 0
+             || strncmp(config.uri, "mqtts://", 8) == 0
+             || strncmp(config.uri, "ws://", 5) == 0
+             || strncmp(config.uri, "wss://", 6) == 0)
+            /* Credentials belong in the separate write-only fields. Apart
+             * from confusing the URI parser, user-info here would be echoed
+             * by diagnostics and logs as part of the broker URI. */
+            && strpbrk(config.uri, "@\r\n\t ") == NULL);
     if (!valid_uri || !config.base_topic[0] || strchr(config.base_topic, '#')
         || strchr(config.base_topic, '+') || config.interval_seconds < 5
         || config.interval_seconds > 3600
@@ -4085,6 +4089,23 @@ static int hex_nibble(char c)
     return -1;
 }
 
+/* Passwords arrive over operator-controlled local endpoints and must not
+ * linger in reusable HTTP-task stack/heap blocks after verification. A
+ * volatile byte loop prevents the compiler from removing the wipe as a
+ * dead store. */
+static void secure_wipe(void *ptr, size_t len)
+{
+    volatile uint8_t *p = (volatile uint8_t *)ptr;
+    while (len--) *p++ = 0;
+}
+
+static void wipe_json_string(cJSON *item)
+{
+    if (cJSON_IsString(item) && item->valuestring) {
+        secure_wipe(item->valuestring, strlen(item->valuestring));
+    }
+}
+
 static bool hex_decode_exact(const char *src, uint8_t *dst, size_t len)
 {
     if (!src || strlen(src) != len * 2) return false;
@@ -4453,10 +4474,13 @@ static esp_err_t auth_login_handler(httpd_req_t *req)
     /* Cap the body at a sane size so a misbehaving client can't make us
      * allocate megabytes for a password field. */
     char buf[256];
-    if (recv_body(req, buf, sizeof buf, NULL) != ESP_OK) return ESP_FAIL;
+    if (recv_body(req, buf, sizeof buf, NULL) != ESP_OK) {
+        secure_wipe(buf, sizeof buf);
+        return ESP_FAIL;
+    }
 
     cJSON *body = cJSON_Parse(buf);
-    memset(buf, 0, sizeof buf);
+    secure_wipe(buf, sizeof buf);
     cJSON *pw = body ? cJSON_GetObjectItem(body, "password") : NULL;
     cJSON *nonce_json = body ? cJSON_GetObjectItem(body, "nonce") : NULL;
     cJSON *proof_json = body ? cJSON_GetObjectItem(body, "proof") : NULL;
@@ -4489,7 +4513,7 @@ static esp_err_t auth_login_handler(httpd_req_t *req)
         (void)proof_iterations;
         memset(proof_salt, 0, sizeof proof_salt);
         if (!proof_required) ok = verify_web_password(pw->valuestring);
-        memset(pw->valuestring, 0, strlen(pw->valuestring));
+        secure_wipe(pw->valuestring, strlen(pw->valuestring));
     }
     cJSON_Delete(body);
     if (proof_required) {
@@ -4600,20 +4624,26 @@ static esp_err_t auth_setup_handler(httpd_req_t *req)
     }
 
     char buf[256];
-    if (recv_body(req, buf, sizeof buf, NULL) != ESP_OK) return ESP_FAIL;
+    if (recv_body(req, buf, sizeof buf, NULL) != ESP_OK) {
+        secure_wipe(buf, sizeof buf);
+        return ESP_FAIL;
+    }
 
     cJSON *body = cJSON_Parse(buf);
+    secure_wipe(buf, sizeof buf);
     cJSON *pw   = body ? cJSON_GetObjectItem(body, "password") : NULL;
     const char *pw_value = NULL;
     if (pw != NULL && cJSON_IsString(pw)) pw_value = pw->valuestring;
     const char *policy_err = check_password_policy(pw_value);
     if (policy_err) {
+        wipe_json_string(pw);
         cJSON_Delete(body);
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, policy_err);
         return ESP_FAIL;
     }
 
     esp_err_t err = set_web_password_hashed(pw_value);
+    wipe_json_string(pw);
     cJSON_Delete(body);
     if (err != ESP_OK) {
         httpd_resp_send_500(req);
@@ -4645,19 +4675,35 @@ static esp_err_t auth_change_password_handler(httpd_req_t *req)
 {
     if (require_auth(req) != ESP_OK) return ESP_FAIL;
 
+    /* When the ordinary web gate is intentionally disabled, require_auth()
+     * permits access by design. Keep old-password verification from becoming
+     * an unlimited online guessing oracle by applying the same per-client
+     * progressive delay as /api/auth/login. */
+    login_guard_t *guard = NULL;
+    if (login_guard_reject(req, &guard)) return ESP_FAIL;
+
     char buf[512];
-    if (recv_body(req, buf, sizeof buf, NULL) != ESP_OK) return ESP_FAIL;
+    if (recv_body(req, buf, sizeof buf, NULL) != ESP_OK) {
+        secure_wipe(buf, sizeof buf);
+        return ESP_FAIL;
+    }
 
     cJSON *body = cJSON_Parse(buf);
-    const cJSON *old_pw = body ? cJSON_GetObjectItem(body, "old_password") : NULL;
-    const cJSON *new_pw = body ? cJSON_GetObjectItem(body, "new_password") : NULL;
+    secure_wipe(buf, sizeof buf);
+    cJSON *old_pw = body ? cJSON_GetObjectItem(body, "old_password") : NULL;
+    cJSON *new_pw = body ? cJSON_GetObjectItem(body, "new_password") : NULL;
     if (!cJSON_IsString(old_pw) || !cJSON_IsString(new_pw)) {
+        wipe_json_string(old_pw);
+        wipe_json_string(new_pw);
         cJSON_Delete(body);
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing old_password or new_password");
         return ESP_FAIL;
     }
 
     if (!verify_web_password(old_pw->valuestring)) {
+        login_guard_failed(guard);
+        wipe_json_string(old_pw);
+        wipe_json_string(new_pw);
         cJSON_Delete(body);
         httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "wrong old password");
         return ESP_FAIL;
@@ -4665,17 +4711,23 @@ static esp_err_t auth_change_password_handler(httpd_req_t *req)
 
     const char *policy_err = check_password_policy(new_pw->valuestring);
     if (policy_err) {
+        wipe_json_string(old_pw);
+        wipe_json_string(new_pw);
         cJSON_Delete(body);
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, policy_err);
         return ESP_FAIL;
     }
 
     esp_err_t err = set_web_password_hashed(new_pw->valuestring);
+    wipe_json_string(old_pw);
+    wipe_json_string(new_pw);
     cJSON_Delete(body);
     if (err != ESP_OK) {
         httpd_resp_send_500(req);
         return ESP_FAIL;
     }
+
+    memset(guard, 0, sizeof *guard);
 
     /* Force re-login after a successful change — matches the OLD repo's
      * behaviour and means a stolen-cookie attacker stays out even if the

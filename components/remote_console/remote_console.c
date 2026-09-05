@@ -584,6 +584,11 @@ static int recv_line(int fd, char *buf, size_t max_len, uint32_t timeout_sec) {
     return (int)pos;
 }
 
+static void secure_wipe(void *ptr, size_t len) {
+    volatile uint8_t *p = (volatile uint8_t *)ptr;
+    while (len--) *p++ = 0;
+}
+
 static bool authenticate_client(int client_fd) {
     char password_input[64];
 
@@ -604,10 +609,13 @@ static bool authenticate_client(int client_fd) {
         /* Receive password (with echo disabled - we don't echo) */
         int len = recv_line(client_fd, password_input, sizeof(password_input), 60);
         if (len < 0) {
+            secure_wipe(password_input, sizeof password_input);
             return false;
         }
 
-        if (verify_web_password(password_input)) {
+        bool authenticated = verify_web_password(password_input);
+        secure_wipe(password_input, sizeof password_input);
+        if (authenticated) {
             send_string(client_fd, RC_AUTH_OK);
             ESP_LOGI(TAG, "Remote console login successful from %s", rc_state.client_ip);
             return true;
@@ -629,6 +637,8 @@ static bool authenticate_client(int client_fd) {
 
     /* Delay before allowing reconnection */
     vTaskDelay(pdMS_TO_TICKS(RC_AUTH_DELAY_MS));
+
+    secure_wipe(password_input, sizeof password_input);
 
     return false;
 }
