@@ -95,8 +95,11 @@ CONFIG_LWIP_L2_TO_L3_COPY=y
 # operator started running a 2-minute speedtest cron from a client, peak
 # load (Ookla opens 8-16 parallel TCP streams + DNS forwarder + MQTT
 # + WG + DERP + 2 httpd pools) blew past 16 and httpd logged
-# "httpd_accept_conn: error in accept (23)" — errno 23 = ENFILE. Up to 24.
-CONFIG_LWIP_MAX_SOCKETS=24
+# "httpd_accept_conn: error in accept (23)" — errno 23 = ENFILE. ESP-IDF
+# 5.3.1 caps this setting at 16; larger values are silently replaced with 10.
+# Keep the HTTP client pool small below so the remaining descriptors stay
+# available to DERP, ntfy, MQTT, DNS and diagnostics.
+CONFIG_LWIP_MAX_SOCKETS=16
 
 # A modern browser request plus the 64-byte ts_session cookie routinely
 # exceeds ESP-IDF's 512-byte default.  At 512 the server rejects otherwise

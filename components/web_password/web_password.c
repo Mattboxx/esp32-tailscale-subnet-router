@@ -242,6 +242,71 @@ static bool verify_pbkdf2(const char *stored, const char *plaintext)
     return hashes_equal(expected, computed);
 }
 
+static bool parse_pbkdf2_record(const char *stored, uint32_t *iterations,
+                                uint8_t salt[PW_SALT_LEN],
+                                uint8_t verifier[PW_HASH_LEN])
+{
+    if (!stored) return false;
+    const size_t prefix_len = strlen(PW_PBKDF2_PREFIX);
+    if (strncmp(stored, PW_PBKDF2_PREFIX, prefix_len) != 0) return false;
+    const char *iterations_text = stored + prefix_len;
+    char *iterations_end = NULL;
+    unsigned long parsed = strtoul(iterations_text, &iterations_end, 10);
+    if (!iterations_end || iterations_end == iterations_text || *iterations_end != '$'
+        || parsed < PW_PBKDF2_ITERS_MIN || parsed > PW_PBKDF2_ITERS_MAX)
+        return false;
+    const char *salt_hex = iterations_end + 1;
+    const char *separator = strchr(salt_hex, '$');
+    if (!separator || (size_t)(separator - salt_hex) != PW_SALT_LEN * 2
+        || strlen(separator + 1) != PW_HASH_LEN * 2
+        || hex_to_bytes(salt_hex, salt, PW_SALT_LEN) != 0
+        || hex_to_bytes(separator + 1, verifier, PW_HASH_LEN) != 0)
+        return false;
+    *iterations = (uint32_t)parsed;
+    return true;
+}
+
+bool web_password_get_proof_params(uint32_t *iterations,
+                                   uint8_t salt[WEB_PASSWORD_SALT_LEN])
+{
+    if (!iterations || !salt) return false;
+    char *stored = nvs_dup_str(PW_NVS_KEY);
+    uint8_t verifier[PW_HASH_LEN] = {0};
+    bool ok = parse_pbkdf2_record(stored, iterations, salt, verifier);
+    free(stored);
+    volatile uint8_t *wipe = verifier;
+    for (size_t i = 0; i < sizeof verifier; i++) wipe[i] = 0;
+    return ok;
+}
+
+bool verify_web_password_proof(const uint8_t *message, size_t message_len,
+                               const uint8_t proof[WEB_PASSWORD_PROOF_LEN])
+{
+    if (!message || !message_len || !proof) return false;
+    char *stored = nvs_dup_str(PW_NVS_KEY);
+    uint32_t iterations = 0;
+    uint8_t salt[PW_SALT_LEN] = {0}, verifier[PW_HASH_LEN] = {0};
+    uint8_t expected[PW_HASH_LEN] = {0};
+    bool ok = parse_pbkdf2_record(stored, &iterations, salt, verifier);
+    free(stored);
+    (void)iterations;
+    if (ok) {
+        const mbedtls_md_info_t *md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+        ok = md && mbedtls_md_hmac(md, verifier, sizeof verifier,
+                                   message, message_len, expected) == 0
+             && hashes_equal(expected, proof);
+    }
+    volatile uint8_t *wipe_salt = salt;
+    volatile uint8_t *wipe_verifier = verifier;
+    volatile uint8_t *wipe_expected = expected;
+    for (size_t i = 0; i < sizeof verifier; i++) {
+        wipe_verifier[i] = 0;
+        wipe_expected[i] = 0;
+        if (i < sizeof salt) wipe_salt[i] = 0;
+    }
+    return ok;
+}
+
 bool is_web_password_set(void)
 {
     char *s = nvs_dup_str(PW_NVS_KEY);

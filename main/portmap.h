@@ -41,6 +41,7 @@ void               portmap_init(void);
 int                portmap_count(void);
 bool               portmap_get(int i, portmap_entry_t *out);
 esp_err_t          portmap_set_all(const portmap_entry_t *arr, int count);
+bool               portmap_listen_conflicts(uint8_t proto, uint16_t port);
 
 /* Refresh lwIP NAPT bindings using the current STA IP. Called from
  * main on IP_GOT_IP and after any table change. Safe to call repeatedly

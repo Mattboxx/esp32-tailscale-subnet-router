@@ -32,6 +32,7 @@ uint32_t mqtt_integration_watchdog_wake_count(void);
 uint32_t mqtt_integration_broker_silence_seconds(void);
 void mqtt_integration_publish_now(void);
 void mqtt_integration_wol_changed(void);
+void mqtt_integration_tailnet_forward_changed(void);
 
 #ifdef __cplusplus
 }

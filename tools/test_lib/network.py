@@ -1,12 +1,10 @@
-"""Network endpoints: /api/status, /api/network, /api/dhcp/*, /api/portmap,
-/api/mac/denylist — read-only sanity + save→readback→restore for the two
-short list endpoints (portmap, mac-denylist)."""
+"""Network endpoints: status/configuration sanity and reversible roundtrips."""
 from __future__ import annotations
 import time
 from .common import Context, Result, SpaClient, check
 
 MODULE_ID = "network"
-MODULE_DESC = "AP/STA/DHCP/portmap/denylist endpoint smoke + roundtrip"
+MODULE_DESC = "AP/STA/DHCP/AP-forward/Tailnet-forward/denylist smoke + roundtrip"
 
 
 def run(ctx: Context) -> list[Result]:
@@ -69,6 +67,36 @@ def run(ctx: Context) -> list[Result]:
         restored = spa.fetch_json("/api/portmap")
         restore_gone = not any(e.get("ext_port") == 47222 for e in restored.get("mappings", []))
         check(results, MODULE_ID, "portmap: probe removed after restore", restore_gone)
+        # ----- independent LAN -> Tailnet forwarding roundtrip -----
+        before_tf = spa.fetch_json("/api/tailnet-forward")
+        check(results, MODULE_ID, "tailnet-forward: GET shape",
+              isinstance(before_tf, dict) and isinstance(before_tf.get("rules"), list))
+
+        tf_probe = {
+            "name": "test-runner", "enabled": False, "protocol": "tcp",
+            "listen_port": 47223, "tailnet_destination": "100.127.255.254",
+            "destination_port": 9, "allowed_source_subnet": "192.168.1.0/24",
+        }
+        tf_list = list(before_tf.get("rules", [])) + [tf_probe]
+        tf_resp = spa.post_json("/api/tailnet-forward", {"rules": tf_list})
+        check(results, MODULE_ID, "tailnet-forward: POST add",
+              isinstance(tf_resp, dict) and tf_resp.get("__http_status") == 200,
+              f"resp={tf_resp}")
+
+        after_tf = spa.fetch_json("/api/tailnet-forward")
+        tf_present = any(e.get("listen_port") == 47223 and e.get("name") == "test-runner"
+                         for e in after_tf.get("rules", []))
+        check(results, MODULE_ID, "tailnet-forward: probe readback", tf_present,
+              f"saved list = {after_tf.get('rules')}")
+
+        tf_restore = spa.post_json("/api/tailnet-forward", {"rules": before_tf.get("rules", [])})
+        check(results, MODULE_ID, "tailnet-forward: restore",
+              isinstance(tf_restore, dict) and tf_restore.get("__http_status") == 200,
+              f"resp={tf_restore}")
+        restored_tf = spa.fetch_json("/api/tailnet-forward")
+        tf_gone = not any(e.get("listen_port") == 47223 for e in restored_tf.get("rules", []))
+        check(results, MODULE_ID, "tailnet-forward: probe removed after restore", tf_gone)
+
 
         # ----- mac denylist roundtrip -----
         before_md = spa.fetch_json("/api/mac/denylist")

@@ -1,5 +1,14 @@
 # Security Policy
 
+## LAN → Tailnet forwarding boundary
+
+Each enabled LAN → Tailnet rule deliberately exposes one Tailnet TCP/UDP
+service on the ESP32 uplink address. The firmware requires an allowed-source
+CIDR, rejects non-CGNAT resolved targets, isolates these mappings from the AP
+and WireGuard input interfaces, and rejects listener collisions. Operators
+should still choose the narrowest CIDR, authenticate the destination service,
+and enforce Tailnet ACLs; this is a gateway, not an application firewall.
+
 ## Reporting a Vulnerability
 
 If you think you've found a security issue in this firmware — for example a

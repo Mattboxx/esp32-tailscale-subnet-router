@@ -19,11 +19,12 @@
 
 ## Mattboxx edition — read this first
 
-This is the `0.1.19-Mattboxx` fork, based on upstream `v0.1.19` and built and
+This is the `0.1.19-Mattboxx-1.2` fork, based on upstream `v0.1.19` and built and
 flashed on a real ESP32-S3 N16R8. It is intentionally different from upstream:
 
 - adds a standby/always-available client WiFi policy, WOL address book, MQTT and extensive
-  Home Assistant controls, optional 4via6, and optional ntfy alerts/commands;
+  Home Assistant controls, optional 4via6, optional ntfy alerts/commands, and
+  independent uplink-LAN → Tailnet service forwarding;
 - fixes WiFi scan/save failures (including HTTP 431), the ntfy command-poll
   reboot loop, and commands silently missed between polls;
 - removes telemetry, external log/crash uploads, automatic GitHub update checks,
@@ -348,7 +349,7 @@ The single-page UI has seven sections:
 | Section | What's there |
 |---|---|
 | **Status** | Uplink, AP, Tailscale node + peer list, memory, uptime |
-| **Network** | Uplink networks, AP (SSID/IP/DNS), DHCP reservations & leases, MAC denylist, port forwarding |
+| **Network** | Uplink networks, AP (SSID/IP/DNS), DHCP, MAC denylist, AP-side forwarding, and separate LAN → Tailnet service forwarding |
 | **Tailscale** | Auth key, hostname, advertised routes, exit node, MTU, peer table |
 | **Firewall** | The four ACL chains, rule editor, hit counters |
 | **Diagnostics** | Route-explain, ping, traceroute, WiFi scan, live + SD logs |
@@ -485,7 +486,7 @@ connections. Diagnostic ping and traceroute run only when explicitly started.
 
 For the complete, explicit comparison with upstream `main`, see
 [`CUSTOM_BRANCH.md`](CUSTOM_BRANCH.md). A ready-to-use Windows flash package is
-available as [`ESP32-S3-router-0.1.19-Mattboxx-windows.zip`](flash-package/ESP32-S3-router-0.1.19-Mattboxx-windows.zip);
+available as [`ESP32-S3-router-0.1.19-Mattboxx-1.2-windows.zip`](flash-package/ESP32-S3-router-0.1.19-Mattboxx-1.2-windows.zip);
 instructions are in [`flash-package/README.txt`](flash-package/README.txt).
 
 ## Security

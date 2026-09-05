@@ -37,6 +37,7 @@
 #include "dhcp_reservations.h"
 #include "dhcps_ext.h"
 #include "portmap.h"
+#include "tailnet_forward.h"
 #include "mac_deny.h"
 #include "reset_history.h"
 #include "ota.h"
@@ -2503,6 +2504,71 @@ static const httpd_uri_t uri_portmap_save = {
     .user_ctx = NULL,
 };
 
+/* Dedicated uplink-LAN -> Tailnet forwarding. This API intentionally has
+ * no AP/client-WiFi fields and persists a wholly separate rule table. */
+static esp_err_t tailnet_forward_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    cJSON *root=cJSON_CreateObject(), *arr=cJSON_CreateArray();
+    if(!root||!arr){cJSON_Delete(root);cJSON_Delete(arr);httpd_resp_send_500(req);return ESP_FAIL;}
+    for(int i=0;i<TAILNET_FORWARD_MAX;i++){
+        tailnet_forward_rule_t r; tailnet_forward_runtime_t rt;
+        if(!tailnet_forward_get(i,&r,&rt))continue;
+        char cidr[32], resolved[16]=""; tailnet_forward_format_cidr(r.source_network,r.source_prefix,cidr,sizeof cidr);
+        if(rt.resolved_ip)snprintf(resolved,sizeof resolved,"%u.%u.%u.%u",(unsigned)(rt.resolved_ip>>24),(unsigned)((rt.resolved_ip>>16)&255),(unsigned)((rt.resolved_ip>>8)&255),(unsigned)(rt.resolved_ip&255));
+        cJSON *j=cJSON_CreateObject();
+        cJSON_AddStringToObject(j,"name",r.name);cJSON_AddBoolToObject(j,"enabled",r.enabled);
+        cJSON_AddStringToObject(j,"protocol",r.proto==TAILNET_FORWARD_PROTO_UDP?"udp":"tcp");
+        cJSON_AddNumberToObject(j,"listen_port",r.listen_port);cJSON_AddStringToObject(j,"tailnet_destination",r.destination);
+        cJSON_AddNumberToObject(j,"destination_port",r.destination_port);cJSON_AddStringToObject(j,"allowed_source_subnet",cidr);
+        cJSON_AddBoolToObject(j,"installed",rt.installed);cJSON_AddStringToObject(j,"resolved_ip",resolved);
+        cJSON_AddNumberToObject(j,"accepted_packets",rt.accepted_packets);cJSON_AddNumberToObject(j,"blocked_packets",rt.blocked_packets);
+        cJSON_AddStringToObject(j,"error",rt.error);cJSON_AddItemToArray(arr,j);
+    }
+    cJSON_AddItemToObject(root,"rules",arr);cJSON_AddNumberToObject(root,"max",TAILNET_FORWARD_MAX);
+    char *body=cJSON_PrintUnformatted(root);cJSON_Delete(root);if(!body){httpd_resp_send_500(req);return ESP_FAIL;}
+    httpd_resp_set_type(req,"application/json");esp_err_t e=httpd_resp_sendstr(req,body);free(body);return e;
+}
+static bool json_port_value(const cJSON *item, uint16_t *out)
+{
+    long value = 0;
+    if (cJSON_IsNumber(item)) {
+        value = item->valueint;
+        if (item->valuedouble != (double)value) return false;
+    } else if (cJSON_IsString(item) && item->valuestring) {
+        char *end = NULL;
+        value = strtol(item->valuestring, &end, 10);
+        if (end == item->valuestring || *end != '\0') return false;
+    } else {
+        return false;
+    }
+    if (value < 1 || value > 65535) return false;
+    *out = (uint16_t)value;
+    return true;
+}
+static esp_err_t tailnet_forward_save_handler(httpd_req_t *req)
+{
+    if(require_auth(req)!=ESP_OK)return ESP_FAIL;
+    char *buf=malloc_body_buf(8192);if(!buf){httpd_resp_send_500(req);return ESP_FAIL;}
+    if(recv_body(req,buf,8192,NULL)!=ESP_OK){free(buf);return ESP_FAIL;}cJSON *root=cJSON_Parse(buf);free(buf);
+    cJSON *arr=root?cJSON_GetObjectItem(root,"rules"):NULL;if(!cJSON_IsArray(arr)){cJSON_Delete(root);httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"missing rules[]");return ESP_FAIL;}
+    int count=cJSON_GetArraySize(arr);if(count>TAILNET_FORWARD_MAX){cJSON_Delete(root);httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"too many rules");return ESP_FAIL;}
+    tailnet_forward_rule_t rules[TAILNET_FORWARD_MAX];memset(rules,0,sizeof rules);
+    for(int i=0;i<count;i++){
+        cJSON *j=cJSON_GetArrayItem(arr,i);const cJSON *name=cJSON_GetObjectItem(j,"name"),*enabled=cJSON_GetObjectItem(j,"enabled"),*proto=cJSON_GetObjectItem(j,"protocol"),*lp=cJSON_GetObjectItem(j,"listen_port"),*dst=cJSON_GetObjectItem(j,"tailnet_destination"),*dp=cJSON_GetObjectItem(j,"destination_port"),*cidr=cJSON_GetObjectItem(j,"allowed_source_subnet");
+        if(!cJSON_IsObject(j)||!cJSON_IsString(proto)||!cJSON_IsString(dst)||!cJSON_IsString(cidr)){cJSON_Delete(root);httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"incomplete rule");return ESP_FAIL;}
+        uint16_t lpi=0,dpi=0;if(!json_port_value(lp,&lpi)||!json_port_value(dp,&dpi)){cJSON_Delete(root);httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"invalid port");return ESP_FAIL;}
+        tailnet_forward_rule_t *r=&rules[i];r->valid=1;r->enabled=!cJSON_IsBool(enabled)||cJSON_IsTrue(enabled);r->proto=!strcasecmp(proto->valuestring,"udp")?17:(!strcasecmp(proto->valuestring,"tcp")?6:0);r->listen_port=lpi;r->destination_port=dpi;
+        strlcpy(r->destination,dst->valuestring,sizeof r->destination);if(cJSON_IsString(name))strlcpy(r->name,name->valuestring,sizeof r->name);
+        if(tailnet_forward_parse_cidr(cidr->valuestring,&r->source_network,&r->source_prefix)!=ESP_OK){cJSON_Delete(root);httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"invalid allowed source subnet");return ESP_FAIL;}
+    }
+    cJSON_Delete(root);char why[128]="";esp_err_t err=tailnet_forward_set_all(rules,count,why,sizeof why);
+    if(err!=ESP_OK){httpd_resp_set_status(req,err==ESP_ERR_INVALID_STATE?"409 Conflict":"400 Bad Request");return httpd_resp_sendstr(req,why[0]?why:"invalid rules");}
+    mqtt_integration_tailnet_forward_changed();httpd_resp_set_type(req,"application/json");return httpd_resp_sendstr(req,"{\"ok\":true}");
+}
+static const httpd_uri_t uri_tailnet_forward={.uri="/api/tailnet-forward",.method=HTTP_GET,.handler=tailnet_forward_handler};
+static const httpd_uri_t uri_tailnet_forward_save={.uri="/api/tailnet-forward",.method=HTTP_POST,.handler=tailnet_forward_save_handler};
+
 /* ─────────────────── MAC denylist ─────────────────── */
 
 static esp_err_t mac_deny_handler(httpd_req_t *req)
@@ -3262,6 +3328,13 @@ static bool     session_alive(void);
 static void     session_extend_all_alive(void);
 static void     session_clear_all(void);
 
+uint16_t web_ui_configured_port(void)
+{
+    uint16_t port = 80;
+    if (nvs_param_get_u16("web_port", &port) != ESP_OK || port == 0) port = 80;
+    return port;
+}
+
 static esp_err_t system_handler(httpd_req_t *req)
 {
     if (require_auth(req) != ESP_OK) return ESP_FAIL;
@@ -3301,6 +3374,7 @@ static esp_err_t system_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "session_remaining_s", session_remaining_s_for_req(req));
     cJSON_AddBoolToObject(root, "web_auth_enabled", s_web_auth_enabled);
     cJSON_AddBoolToObject(root, "web_password_set", is_web_password_set());
+    cJSON_AddNumberToObject(root, "web_port", web_ui_configured_port());
 
     /* TX-power override (0 = IDF default ≈ 20 dBm, 8..84 = custom in
      * 0.25 dBm steps). Reading via the live API gives whatever was
@@ -3389,6 +3463,26 @@ static esp_err_t system_save_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
+    bool web_port_changed = false;
+    const cJSON *wp = cJSON_GetObjectItem(root, "web_port");
+    if (cJSON_IsNumber(wp)) {
+        int requested = (int)wp->valuedouble;
+        if (wp->valuedouble != (double)requested || requested < 1 || requested > 65535) {
+            cJSON_Delete(root);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                                "web_port must be a whole number from 1 to 65535");
+            return ESP_FAIL;
+        }
+        if (portmap_listen_conflicts(PORTMAP_PROTO_TCP, (uint16_t)requested) ||
+            tailnet_forward_listen_conflicts(TAILNET_FORWARD_PROTO_TCP, (uint16_t)requested)) {
+            cJSON_Delete(root);
+            httpd_resp_set_status(req, "409 Conflict");
+            return httpd_resp_sendstr(req, "Web UI port conflicts with a TCP forwarding rule");
+        }
+        web_port_changed = (uint16_t)requested != web_ui_configured_port();
+        nvs_save_record_err("web_port", nvs_param_set_u16("web_port", (uint16_t)requested));
+    }
+
     /* Device-name update — operator-defined label persisted under
      * NVS "dev_name", surfaced everywhere the SPA reads /api/auth/status
      * or /api/system. */
@@ -3459,7 +3553,7 @@ static esp_err_t system_save_handler(httpd_req_t *req)
      * twin block in tailscale_save_handler. */
     cJSON *resp = cJSON_CreateObject();
     nvs_save_errors_attach(resp);
-    if (tz_changed) cJSON_AddBoolToObject(resp, "restart_required", true);
+    if (tz_changed || web_port_changed) cJSON_AddBoolToObject(resp, "restart_required", true);
     char *body = cJSON_PrintUnformatted(resp);
     cJSON_Delete(resp);
     httpd_resp_set_type(req, "application/json");
@@ -3983,6 +4077,26 @@ static void hex_encode(const uint8_t *src, size_t len, char *out)
     out[len * 2] = '\0';
 }
 
+static int hex_nibble(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+static bool hex_decode_exact(const char *src, uint8_t *dst, size_t len)
+{
+    if (!src || strlen(src) != len * 2) return false;
+    for (size_t i = 0; i < len; i++) {
+        int hi = hex_nibble(src[i * 2]);
+        int lo = hex_nibble(src[i * 2 + 1]);
+        if (hi < 0 || lo < 0) return false;
+        dst[i] = (uint8_t)((hi << 4) | lo);
+    }
+    return true;
+}
+
 static uint32_t session_timeout_clamp(uint32_t v)
 {
     if (v == 0) return 0;  /* explicitly disabled */
@@ -4175,7 +4289,7 @@ static esp_err_t auth_status_handler(httpd_req_t *req)
 
 /* Per-client login throttling. Weak passwords are intentionally permitted by
  * policy, so the HTTP endpoint must not also be an unlimited online guessing
- * oracle. Four buckets cover the ESP HTTP server's small concurrent-client
+ * oracle. Sixteen buckets cover the ESP HTTP server's concurrent-client
  * limit without putting attacker-controlled state in NVS. */
 typedef struct {
     uint32_t peer_ip;
@@ -4248,6 +4362,90 @@ static void login_guard_failed(login_guard_t *guard)
                             + (uint64_t)delay_s * 1000000ULL;
 }
 
+
+#define LOGIN_CHALLENGE_SLOTS 8
+#define LOGIN_CHALLENGE_NONCE_LEN 16
+#define LOGIN_CHALLENGE_TTL_US (30ULL * 1000000ULL)
+static const char s_login_proof_context[] = "esp32-router-login-v1";
+
+typedef struct {
+    uint32_t peer_ip;
+    uint8_t nonce[LOGIN_CHALLENGE_NONCE_LEN];
+    uint64_t expires_us;
+} login_challenge_t;
+
+static login_challenge_t s_login_challenges[LOGIN_CHALLENGE_SLOTS];
+
+static login_challenge_t *login_challenge_issue(httpd_req_t *req)
+{
+    uint64_t now = (uint64_t)esp_timer_get_time();
+    int slot = 0;
+    uint64_t oldest_expiry = UINT64_MAX;
+    for (int i = 0; i < LOGIN_CHALLENGE_SLOTS; i++) {
+        if (now >= s_login_challenges[i].expires_us) { slot = i; break; }
+        if (s_login_challenges[i].expires_us < oldest_expiry) {
+            oldest_expiry = s_login_challenges[i].expires_us;
+            slot = i;
+        }
+    }
+    login_challenge_t *challenge = &s_login_challenges[slot];
+    challenge->peer_ip = request_peer_ipv4(req);
+    esp_fill_random(challenge->nonce, sizeof challenge->nonce);
+    challenge->expires_us = now + LOGIN_CHALLENGE_TTL_US;
+    return challenge;
+}
+
+static bool login_challenge_consume(httpd_req_t *req, const uint8_t *nonce)
+{
+    uint64_t now = (uint64_t)esp_timer_get_time();
+    uint32_t peer_ip = request_peer_ipv4(req);
+    for (int i = 0; i < LOGIN_CHALLENGE_SLOTS; i++) {
+        login_challenge_t *challenge = &s_login_challenges[i];
+        if (challenge->expires_us > now && challenge->peer_ip == peer_ip
+            && memcmp(challenge->nonce, nonce, sizeof challenge->nonce) == 0) {
+            memset(challenge, 0, sizeof *challenge);
+            return true;
+        }
+    }
+    return false;
+}
+
+static esp_err_t auth_challenge_handler(httpd_req_t *req)
+{
+    login_guard_t *guard = NULL;
+    if (login_guard_reject(req, &guard)) return ESP_FAIL;
+    (void)guard;
+
+    uint32_t iterations = 0;
+    uint8_t salt[WEB_PASSWORD_SALT_LEN];
+    cJSON *root = cJSON_CreateObject();
+    if (!root) { httpd_resp_send_500(req); return ESP_FAIL; }
+    if (!web_password_get_proof_params(&iterations, salt)) {
+        cJSON_AddBoolToObject(root, "supported", false);
+    } else {
+        login_challenge_t *challenge = login_challenge_issue(req);
+        char salt_hex[WEB_PASSWORD_SALT_LEN * 2 + 1];
+        char nonce_hex[LOGIN_CHALLENGE_NONCE_LEN * 2 + 1];
+        hex_encode(salt, sizeof salt, salt_hex);
+        hex_encode(challenge->nonce, sizeof challenge->nonce, nonce_hex);
+        cJSON_AddBoolToObject(root, "supported", true);
+        cJSON_AddStringToObject(root, "algorithm", "PBKDF2-HMAC-SHA256");
+        cJSON_AddNumberToObject(root, "iterations", iterations);
+        cJSON_AddStringToObject(root, "salt", salt_hex);
+        cJSON_AddStringToObject(root, "nonce", nonce_hex);
+        cJSON_AddStringToObject(root, "context", s_login_proof_context);
+    }
+    memset(salt, 0, sizeof salt);
+    char *body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!body) { httpd_resp_send_500(req); return ESP_FAIL; }
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, body);
+    free(body);
+    return err;
+}
+
 static esp_err_t auth_login_handler(httpd_req_t *req)
 {
     login_guard_t *guard = NULL;
@@ -4258,15 +4456,48 @@ static esp_err_t auth_login_handler(httpd_req_t *req)
     if (recv_body(req, buf, sizeof buf, NULL) != ESP_OK) return ESP_FAIL;
 
     cJSON *body = cJSON_Parse(buf);
-    cJSON *pw   = body ? cJSON_GetObjectItem(body, "password") : NULL;
-    if (!cJSON_IsString(pw)) {
+    memset(buf, 0, sizeof buf);
+    cJSON *pw = body ? cJSON_GetObjectItem(body, "password") : NULL;
+    cJSON *nonce_json = body ? cJSON_GetObjectItem(body, "nonce") : NULL;
+    cJSON *proof_json = body ? cJSON_GetObjectItem(body, "proof") : NULL;
+    bool has_proof = cJSON_IsString(nonce_json) && cJSON_IsString(proof_json);
+    if (!cJSON_IsString(pw) && !has_proof) {
         cJSON_Delete(body);
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing password");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing password or proof");
         return ESP_FAIL;
     }
 
-    bool ok = verify_web_password(pw->valuestring);
+    bool ok = false;
+    bool proof_required = false;
+    if (has_proof) {
+        uint8_t nonce[LOGIN_CHALLENGE_NONCE_LEN], proof[WEB_PASSWORD_PROOF_LEN];
+        if (hex_decode_exact(nonce_json->valuestring, nonce, sizeof nonce)
+            && hex_decode_exact(proof_json->valuestring, proof, sizeof proof)
+            && login_challenge_consume(req, nonce)) {
+            uint8_t message[sizeof s_login_proof_context - 1 + LOGIN_CHALLENGE_NONCE_LEN];
+            memcpy(message, s_login_proof_context, sizeof s_login_proof_context - 1);
+            memcpy(message + sizeof s_login_proof_context - 1, nonce, sizeof nonce);
+            ok = verify_web_password_proof(message, sizeof message, proof);
+            memset(message, 0, sizeof message);
+        }
+        memset(nonce, 0, sizeof nonce);
+        memset(proof, 0, sizeof proof);
+    } else {
+        uint32_t proof_iterations = 0;
+        uint8_t proof_salt[WEB_PASSWORD_SALT_LEN] = {0};
+        proof_required = web_password_get_proof_params(&proof_iterations, proof_salt);
+        (void)proof_iterations;
+        memset(proof_salt, 0, sizeof proof_salt);
+        if (!proof_required) ok = verify_web_password(pw->valuestring);
+        memset(pw->valuestring, 0, strlen(pw->valuestring));
+    }
     cJSON_Delete(body);
+    if (proof_required) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                            "challenge-response proof required");
+        return ESP_FAIL;
+    }
+
 
     if (!ok) {
         login_guard_failed(guard);
@@ -4305,6 +4536,9 @@ static esp_err_t auth_logout_handler(httpd_req_t *req)
 
 static const httpd_uri_t uri_auth_status = {
     .uri = "/api/auth/status", .method = HTTP_GET,  .handler = auth_status_handler,
+};
+static const httpd_uri_t uri_auth_challenge = {
+    .uri = "/api/auth/challenge", .method = HTTP_GET, .handler = auth_challenge_handler,
 };
 static const httpd_uri_t uri_auth_login = {
     .uri = "/api/auth/login",  .method = HTTP_POST, .handler = auth_login_handler,
@@ -4737,15 +4971,14 @@ void web_ui_init(void)
      * instead of WebCrypto's ~100 ms. */
     httpd_config_t conf           = HTTPD_DEFAULT_CONFIG();
     conf.uri_match_fn             = httpd_uri_match_wildcard;
-    conf.max_uri_handlers         = 68;
+    conf.max_uri_handlers         = 72;
     conf.stack_size               = 12288;
-    /* The HTTP server needs three lwIP sockets internally. Older ESP-IDF
-     * releases cap CONFIG_LWIP_MAX_SOCKETS at 16 and silently replace an
-     * out-of-range sdkconfig value with the default (10). Clamp the client
-     * pool so a stale/generated sdkconfig cannot make httpd_start fail and
-     * take the entire setup UI down. */
+    /* The HTTP server needs three lwIP sockets internally. Four client slots
+     * are enough for this SPA's post-login burst while preserving descriptors
+     * for DERP, ntfy, MQTT and DNS. Also clamp against stale/generated
+     * sdkconfig values so httpd_start still succeeds. */
     const size_t httpd_internal_sockets = 3;
-    const size_t desired_http_clients = 13;
+    const size_t desired_http_clients = 4;
     if (CONFIG_LWIP_MAX_SOCKETS <= httpd_internal_sockets) {
         ESP_LOGE(TAG, "CONFIG_LWIP_MAX_SOCKETS=%d leaves no sockets for HTTP clients",
                  CONFIG_LWIP_MAX_SOCKETS);
@@ -4757,7 +4990,7 @@ void web_ui_init(void)
                           ? available_http_clients
                           : desired_http_clients;
     conf.lru_purge_enable         = true;
-    conf.server_port              = 80;
+    conf.server_port              = web_ui_configured_port();
 
     if (httpd_start(&server, &conf) != ESP_OK) {
         ESP_LOGE(TAG, "httpd_start failed");
@@ -4791,6 +5024,8 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_dhcp_kick);
     httpd_register_uri_handler(server, &uri_portmap);
     httpd_register_uri_handler(server, &uri_portmap_save);
+    httpd_register_uri_handler(server, &uri_tailnet_forward);
+    httpd_register_uri_handler(server, &uri_tailnet_forward_save);
     httpd_register_uri_handler(server, &uri_mac_deny);
     httpd_register_uri_handler(server, &uri_mac_deny_save);
     httpd_register_uri_handler(server, &uri_log_raw);
@@ -4810,6 +5045,7 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_system_diag);
     httpd_register_uri_handler(server, &uri_system_debug_crash);
     httpd_register_uri_handler(server, &uri_auth_status);
+    httpd_register_uri_handler(server, &uri_auth_challenge);
     httpd_register_uri_handler(server, &uri_auth_login);
     httpd_register_uri_handler(server, &uri_auth_logout);
     httpd_register_uri_handler(server, &uri_auth_setup);

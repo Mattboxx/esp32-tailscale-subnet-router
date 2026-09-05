@@ -6,6 +6,51 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.1.19-Mattboxx-1.2] — 2026-09-04
+
+### Added
+
+- A dedicated **LAN → Tailnet Port Forwarding** table exposes individual TCP
+  or UDP services from a Tailnet peer on the ESP32 uplink address. It is
+  independent of the ESP access point, supports Tailscale IPv4 and MagicDNS
+  peer names, requires an allowed-source CIDR, and reports rule state/counters
+  through the web UI, MQTT/Home Assistant and `ntfy info`.
+- The web UI TCP port is configurable under System. Saves reject collisions
+  with either forwarding table before changing any settings.
+- `ntfy info` always lists saved WOL device names; MAC addresses remain behind
+  the optional private-details switch.
+
+### Fixed
+
+- LAN → Tailnet rules no longer fail with `incomplete rule` when browser
+  number inputs arrive as JSON strings. The browser now emits integer ports
+  and the API also accepts strictly numeric strings for compatibility.
+- Disabling the web password gate no longer dims the entire Web session card;
+  the session-timeout controls remain readable and usable.
+- The LAN → Tailnet regression test now uses the public API field name.
+- Port-map startup logs now report the number of mappings actually installed
+  instead of subtracting configured/disabled entries.
+
+### Changed
+
+- Normal browser login now uses a one-time PBKDF2/HMAC challenge. The costly
+  password derivation runs in the browser and the ESP verifies the proof in
+  about a network round trip. Plaintext login is accepted only for migrating
+  legacy verifier records; modern records require the non-blocking proof path.
+- Plain-HTTP login uses a specialised allocation-light PBKDF2-HMAC-SHA256
+  fallback instead of SJCL's generic bit arrays. It keeps all 60,000 rounds
+  while reducing the measured browser-side derivation from seconds to tens of
+  milliseconds on a typical desktop.
+- The web server now reserves socket capacity for DERP, ntfy, MQTT and DNS
+  instead of allowing idle browser connections to exhaust the global lwIP
+  descriptor table.
+- The dashboard retries its first status read after login, avoiding a false
+  `Unreachable` badge when the browser races a just-closed login connection.
+- WiFi modem sleep is disabled and the socket pool is raised from 10 to 16
+  for lower forwarding latency and reliable concurrent UI/MQTT/ntfy traffic.
+
+## [0.1.19-Mattboxx-1.1] — 2026-09-04
+
 ### Fixed
 
 - **Repeated web-UI unlocks no longer rerun the full password KDF.** The first

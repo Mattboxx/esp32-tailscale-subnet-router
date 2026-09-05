@@ -17,11 +17,18 @@ set(EXTRA_COMPONENT_DIRS
     external/microlink/components/microlink/components/wireguard_lwip
 )
 
+# PlatformIO passes an environment-specific generated sdkconfig path. Make the
+# tracked defaults explicit as well: otherwise some PlatformIO/CMake cache
+# combinations regenerate sdkconfig.<env> from Kconfig defaults (10 sockets)
+# and silently discard the network-service budget in sdkconfig.defaults.
+set(SDKCONFIG_DEFAULTS "${CMAKE_SOURCE_DIR}/sdkconfig.defaults" CACHE STRING
+    "Project sdkconfig defaults" FORCE)
+
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
 # PROJECT_VER lands in the esp_app_desc_t struct so the running firmware
 # can report its version via the OTA APIs and the web UI's Status page.
-set(PROJECT_VER "0.1.19-Mattboxx")
+set(PROJECT_VER "0.1.19-Mattboxx-1.2")
 
 project(esp32_tsr)
 

@@ -18,6 +18,7 @@
  */
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 #include "lwip/ip4_addr.h"
 #include "lwip/netif.h"
 #include "lwip/pbuf.h"
@@ -34,6 +35,7 @@
 #include "lwip_route_hook.h"
 #include "microlink.h"
 #include "tailscale_config.h"
+#include "tailnet_forward.h"
 #include "ping/ping_sock.h"
 
 static const char *TAG = "exit_route";
@@ -791,8 +793,28 @@ err_t __wrap_ip_napt_forward(struct pbuf *p, struct ip_hdr *iphdr,
                                struct netif *inp, struct netif *outp)
 {
     if (iphdr != NULL) {
+        uint8_t proto = IPH_PROTO(iphdr);
+        uint16_t src_port = 0, dest_port = 0;
+        if ((proto == 6 || proto == 17) && p && p->len >= IPH_HL(iphdr) * 4 + 4) {
+            uint8_t *l4 = (uint8_t *)p->payload + IPH_HL(iphdr) * 4;
+            memcpy(&src_port, l4, 2); memcpy(&dest_port, l4 + 2, 2);
+            src_port = lwip_ntohs(src_port); dest_port = lwip_ntohs(dest_port);
+        }
+        struct netif *wg = find_wg_netif();
+        if (inp && outp && inp != outp && proto &&
+            ((netif_is_sta(inp) && outp == wg &&
+              tailnet_forward_is_routed_target(proto, iphdr->dest.addr, dest_port)) ||
+             (inp == wg && netif_is_sta(outp) &&
+              tailnet_forward_is_routed_response(proto, iphdr->src.addr, src_port)))) {
+            uint8_t saved = inp->napt;
+            inp->napt = 1;
+            err_t r = __real_ip_napt_forward(p, iphdr, inp, outp);
+            inp->napt = saved;
+            return r;
+        }
+
         uint32_t dest_hbo = lwip_ntohl(iphdr->dest.addr);
-        if (ip_in_cgnat(dest_hbo) && IPH_PROTO(iphdr) == 6 /* IPPROTO_TCP */) {
+        if (ip_in_cgnat(dest_hbo) && proto == 6 /* IPPROTO_TCP */) {
             return ERR_OK;
         }
 

@@ -6,6 +6,7 @@
  * SPDX-License-Identifier: MIT
  */
 #pragma once
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -13,6 +14,9 @@ extern "C" {
 
 /* Start the HTTP server. Idempotent — subsequent calls are no-ops. */
 void web_ui_init(void);
+
+/* Persisted listener port (default 80); changes take effect after restart. */
+uint16_t web_ui_configured_port(void);
 
 #ifdef __cplusplus
 }

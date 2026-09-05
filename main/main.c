@@ -55,6 +55,7 @@
 #include "mqtt_integration.h"
 #include "dhcp_reservations.h"
 #include "portmap.h"
+#include "tailnet_forward.h"
 #include "mac_deny.h"
 #include "reset_history.h"
 #include "ota.h"
@@ -990,6 +991,12 @@ void app_main(void)
 
     /* Start WiFi */
     ESP_ERROR_CHECK(esp_wifi_start() );
+    /* A router is normally mains-powered. Disable modem sleep so forwarded
+     * packets are not held until a DTIM wake-up; this improves latency and
+     * sustained LAN/AP-to-Tailnet throughput at the cost of higher power
+     * consumption. */
+    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
+
 
     /* Optional TX-power override. NVS "tx_pwr" is a u8 in 0.25 dBm
      * steps (matches esp_wifi_set_max_tx_power): valid range is 8..84
@@ -1061,6 +1068,7 @@ void app_main(void)
      * actual lwIP bindings are installed from the IP_GOT_IP handler
      * once we know the STA's bind IP. */
     portmap_init();
+    tailnet_forward_init();
 
     /* MAC denylist — the AP_STACONNECTED handler consults this cache
      * (lock-free) to decide whether to deauth the freshly-associated

@@ -19,6 +19,7 @@ extern "C" {
 #endif
 
 void netif_hooks_init(void);
+void netif_hooks_refresh(void);
 
 /* Wire-byte counters — accumulated in the four hook tap points before
  * the ACL check, so they represent everything that actually hit the

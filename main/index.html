@@ -2162,6 +2162,17 @@
           </div>
         </div>
       </div>
+
+      <!-- ===== LAN -> Tailnet forwarding (independent of AP-side NAPT) ===== -->
+      <div class="card mt-4">
+        <div class="card-header"><div class="card-header-left"><span class="card-title">LAN → Tailnet Port Forwarding</span></div><span class="badge badge-neutral" id="tf-badge">—</span></div>
+        <div class="card-body">
+          <p class="form-hint" style="margin:0 0 0.75rem 0;">Expose selected Tailnet services on the ESP32 uplink-LAN address. LAN clients do not need Tailscale and do not need to join the ESP32 access point. This table is fully separate from AP-side port forwarding.</p>
+          <div id="tf-list"></div>
+          <div style="margin-top:0.75rem;"><button class="btn btn-secondary btn-md" id="tf-add" type="button">+ Add rule</button></div>
+        </div>
+        <div class="form-footer"><span class="form-footer-hint">A source CIDR is mandatory. Up to 8 TCP/UDP rules; listen ports must be unique per protocol.</span><div class="form-footer-actions"><button class="btn btn-secondary btn-md" id="tf-reload">Reload</button><button class="btn btn-primary btn-md" id="tf-save" disabled>Save</button></div></div>
+      </div>
     </div>
 
     <!-- =================================================================
@@ -2809,6 +2820,11 @@
             </div>
             <span class="form-hint">Lower values cut interference at the cost of AP range. <strong>80 ≈ 20 dBm</strong> is the IDF default. Applied live + at next boot.</span>
           </div>
+          <div class="form-group" style="margin:.5rem 0;">
+            <label class="form-label" for="sys-web-port">Web UI TCP port</label>
+            <input class="input mono" type="number" id="sys-web-port" min="1" max="65535" style="width:9rem;" value="80">
+            <span class="form-hint">Requires a restart. A TCP forwarding rule cannot use the same port.</span>
+          </div>
           <div class="stat-row"><span class="stat-label">Firmware version</span><span class="stat-value mono" id="sys-version">—</span></div>
           <div class="stat-row"><span class="stat-label">Build tag</span>        <span class="stat-value mono" id="sys-build-tag" title="—">—</span></div>
           <div class="stat-row"><span class="stat-label">ESP-IDF</span>          <span class="stat-value mono" id="sys-idf">—</span></div>
@@ -2910,7 +2926,7 @@
       </div>
 
       <!-- ===== Web session ===== -->
-      <div class="card feature-card feature-disabled mt-4" id="web-session-card">
+      <div class="card mt-4" id="web-session-card">
         <div class="card-header">
           <div class="card-header-left">
             <span class="card-title">Web session</span>
@@ -3728,7 +3744,7 @@
     }
 
     // Fetch with fallback to sample data; 401 → login overlay
-    function fetchStatus() {
+    function fetchStatus(isRetry) {
       var refreshIcon = document.querySelector('#refreshBtn svg');
       if (refreshIcon) refreshIcon.style.animation = 'spin 0.7s linear infinite';
 
@@ -3741,7 +3757,7 @@
       ob.className = 'badge badge-info';
       ob.innerHTML = '<span class="badge-dot badge-dot-pulse"></span> Refreshing…';
 
-      fetch('/api/status', { credentials: 'same-origin' })
+      fetch('/api/status', { credentials: 'same-origin', cache: 'no-store' })
         .then(function (r) {
           if (r.status === 401) {
             showAuthOverlay('login');
@@ -3755,6 +3771,14 @@
         })
         .catch(function (err) {
           if (err && err.message === '401') return; // already handled
+          /* ESP-IDF may retire the login socket just as the browser tries to
+           * reuse it for the first status request. Retry once on a fresh
+           * connection so a successful login does not briefly render as an
+           * unreachable router. */
+          if (!isRetry) {
+            setTimeout(function () { fetchStatus(true); }, 250);
+            return;
+          }
           /* A fetch failure on the device is an honest error — surface
            * it rather than masking it with stale sample data. */
           ob.className = 'badge badge-danger';
@@ -4158,6 +4182,171 @@
         });
     });
 
+    function _loginHexToBytes(hex) {
+      if (!hex || (hex.length & 1)) throw new Error('challenge');
+      var out = new Uint8Array(hex.length / 2);
+      for (var i = 0; i < out.length; i++) {
+        var n = parseInt(hex.substr(i * 2, 2), 16);
+        if (!Number.isFinite(n)) throw new Error('challenge');
+        out[i] = n;
+      }
+      return out;
+    }
+    function _loginBytesToHex(bytes) {
+      var out = '';
+      for (var i = 0; i < bytes.length; i++) out += bytes[i].toString(16).padStart(2, '0');
+      return out;
+    }
+    function _loginMessage(context, nonce) {
+      var prefix = new TextEncoder().encode(context);
+      var out = new Uint8Array(prefix.length + nonce.length);
+      out.set(prefix, 0); out.set(nonce, prefix.length);
+      return out;
+    }
+
+    /* Optimised, allocation-light SHA-256/HMAC/PBKDF2 fallback for ordinary
+     * http:// device pages, where browsers deliberately hide crypto.subtle.
+     * SJCL remains bundled for encrypted backup compatibility, but its generic
+     * bit-array PBKDF2 took several seconds on every login. This specialised
+     * one-block PBKDF2 implementation keeps the same SHA-256 algorithm and the
+     * same server-provided iteration count; only the browser execution path is
+     * faster. */
+    var _loginSha256K = new Uint32Array([
+      0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+      0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+      0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+      0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+      0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+      0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+      0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+      0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+    ]);
+    function _loginSha256State() {
+      return new Uint32Array([0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,
+                              0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19]);
+    }
+    function _loginSha256Compress(state, block, words) {
+      var i, x;
+      for (i=0;i<16;i++) {
+        x=i*4; words[i]=((block[x]<<24)|(block[x+1]<<16)|(block[x+2]<<8)|block[x+3])|0;
+      }
+      for (i=16;i<64;i++) {
+        var a=words[i-15], b=words[i-2];
+        var s0=((a>>>7)|(a<<25))^((a>>>18)|(a<<14))^(a>>>3);
+        var s1=((b>>>17)|(b<<15))^((b>>>19)|(b<<13))^(b>>>10);
+        words[i]=(words[i-16]+s0+words[i-7]+s1)|0;
+      }
+      var A=state[0]|0,B=state[1]|0,C=state[2]|0,D=state[3]|0;
+      var E=state[4]|0,F=state[5]|0,G=state[6]|0,H=state[7]|0;
+      for(i=0;i<64;i++) {
+        var e1=((E>>>6)|(E<<26))^((E>>>11)|(E<<21))^((E>>>25)|(E<<7));
+        var ch=(E&F)^((~E)&G);
+        var t1=(H+e1+ch+(_loginSha256K[i]|0)+words[i])|0;
+        var a0=((A>>>2)|(A<<30))^((A>>>13)|(A<<19))^((A>>>22)|(A<<10));
+        var maj=(A&B)^(A&C)^(B&C);
+        var t2=(a0+maj)|0;
+        H=G;G=F;F=E;E=(D+t1)|0;D=C;C=B;B=A;A=(t1+t2)|0;
+      }
+      state[0]=(state[0]+A)>>>0;state[1]=(state[1]+B)>>>0;
+      state[2]=(state[2]+C)>>>0;state[3]=(state[3]+D)>>>0;
+      state[4]=(state[4]+E)>>>0;state[5]=(state[5]+F)>>>0;
+      state[6]=(state[6]+G)>>>0;state[7]=(state[7]+H)>>>0;
+    }
+    function _loginStateBytes(state, out) {
+      for(var i=0;i<8;i++){var v=state[i];out[i*4]=v>>>24;out[i*4+1]=v>>>16;out[i*4+2]=v>>>8;out[i*4+3]=v;}
+    }
+    function _loginSha256(data) {
+      var total=((data.length+9+63)>>6)<<6, padded=new Uint8Array(total), words=new Int32Array(64);
+      padded.set(data);padded[data.length]=0x80;
+      var bits=data.length*8, hi=Math.floor(bits/0x100000000), lo=bits>>>0;
+      for(var i=0;i<4;i++){padded[total-8+i]=(hi>>>(24-i*8))&255;padded[total-4+i]=(lo>>>(24-i*8))&255;}
+      var state=_loginSha256State();
+      for(var off=0;off<total;off+=64)_loginSha256Compress(state,padded.subarray(off,off+64),words);
+      var out=new Uint8Array(32);_loginStateBytes(state,out);return out;
+    }
+    function _loginHmacFactory(key) {
+      if(key.length>64)key=_loginSha256(key);
+      var ipad=new Uint8Array(64),opad=new Uint8Array(64),words=new Int32Array(64);
+      for(var i=0;i<64;i++){var v=i<key.length?key[i]:0;ipad[i]=v^0x36;opad[i]=v^0x5c;}
+      var ibase=_loginSha256State(),obase=_loginSha256State();
+      _loginSha256Compress(ibase,ipad,words);_loginSha256Compress(obase,opad,words);
+      var innerBlock=new Uint8Array(64),outerBlock=new Uint8Array(64);
+      var innerState=new Uint32Array(8),outerState=new Uint32Array(8);
+      return function(message,out){
+        innerBlock.fill(0);innerBlock.set(message);innerBlock[message.length]=0x80;
+        var innerBits=(64+message.length)*8;
+        innerBlock[60]=innerBits>>>24;innerBlock[61]=innerBits>>>16;innerBlock[62]=innerBits>>>8;innerBlock[63]=innerBits;
+        innerState.set(ibase);_loginSha256Compress(innerState,innerBlock,words);
+        outerBlock.fill(0);_loginStateBytes(innerState,outerBlock);outerBlock[32]=0x80;
+        outerBlock[62]=3;outerBlock[63]=0; /* (64 + 32) * 8 = 768 */
+        outerState.set(obase);_loginSha256Compress(outerState,outerBlock,words);
+        _loginStateBytes(outerState,out);return out;
+      };
+    }
+    function _loginPbkdf2Fast(password,salt,iterations) {
+      var hmac=_loginHmacFactory(new TextEncoder().encode(password));
+      var first=new Uint8Array(salt.length+4);first.set(salt);first[first.length-1]=1;
+      var u=new Uint8Array(32),derived=new Uint8Array(32);hmac(first,u);derived.set(u);
+      for(var round=1;round<iterations;round++){hmac(u,u);for(var j=0;j<32;j++)derived[j]^=u[j];}
+      return derived;
+    }
+    function _deriveLoginProof(password, challenge) {
+      var salt = _loginHexToBytes(challenge.salt);
+      var nonce = _loginHexToBytes(challenge.nonce);
+      var message = _loginMessage(challenge.context, nonce);
+      if (_hasSubtle) {
+        return crypto.subtle.importKey(
+          'raw', new TextEncoder().encode(password), { name: 'PBKDF2' }, false, ['deriveBits']
+        ).then(function (baseKey) {
+          return crypto.subtle.deriveBits(
+            { name: 'PBKDF2', salt: salt, iterations: challenge.iterations, hash: 'SHA-256' },
+            baseKey, 256
+          );
+        }).then(function (derived) {
+          return crypto.subtle.importKey(
+            'raw', derived, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+          );
+        }).then(function (hmacKey) {
+          return crypto.subtle.sign('HMAC', hmacKey, message);
+        }).then(function (proof) { return _loginBytesToHex(new Uint8Array(proof)); });
+      }
+      return new Promise(function (resolve, reject) {
+        setTimeout(function () {
+          try {
+            var key = _loginPbkdf2Fast(password, salt, challenge.iterations);
+            var proof = new Uint8Array(32);
+            _loginHmacFactory(key)(message, proof);
+            resolve(_loginBytesToHex(proof));
+          } catch (e) { reject(e); }
+        }, 0);
+      });
+    }
+    function _plainLogin(password) {
+      return fetch('/api/auth/login', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: password })
+      });
+    }
+    function loginPasswordRequest(password) {
+      return fetch('/api/auth/challenge', { credentials: 'same-origin', cache: 'no-store' })
+        .then(function (r) {
+          if (r.status === 429) throw new Error('rate:' + (r.headers.get('Retry-After') || 'a few'));
+          if (!r.ok) throw new Error('challenge');
+          return r.json();
+        }).then(function (challenge) {
+          if (!challenge.supported) return _plainLogin(password);
+          return _deriveLoginProof(password, challenge).then(function (proof) {
+            return fetch('/api/auth/login', {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ nonce: challenge.nonce, proof: proof })
+            });
+          });
+        });
+    }
+
+
     // =====================================================================
     // AUTH — login submit
     // =====================================================================
@@ -4175,12 +4364,7 @@
       btn.disabled = true;
       btn.textContent = 'Signing in…';
 
-      fetch('/api/auth/login', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: pw })
-      })
+      loginPasswordRequest(pw)
         .then(function (r) {
           if (r.ok) return r;
           if (r.status === 401) throw new Error('wrong');
@@ -4556,6 +4740,7 @@
       loadDhcpLeases();
       loadDenylist();
       loadPortmap();
+      loadTailnetForward();
     }
 
     /* Top-level network-list buttons. */
@@ -5531,6 +5716,16 @@
           showToast('error', 'Save failed', 'Mappings were not stored.', 5000);
         });
     });
+
+    // Dedicated LAN -> Tailnet forwarding (not tied to AP/client WiFi).
+    var s_tf_list=[], s_tf_max=8;
+    function snapshotTf(){document.querySelectorAll('.tf-row').forEach(function(row){var r=s_tf_list[+row.dataset.idx];if(!r)return;r.name=row.querySelector('.tf-name').value.trim();r.enabled=row.querySelector('.tf-enabled').checked;r.protocol=row.querySelector('.tf-proto').value;r.listen_port=parseInt(row.querySelector('.tf-listen').value,10);r.tailnet_destination=row.querySelector('.tf-dest').value.trim();r.destination_port=parseInt(row.querySelector('.tf-dport').value,10);r.allowed_source_subnet=row.querySelector('.tf-cidr').value.trim();});}
+    function tfDirty(){document.getElementById('tf-save').disabled=false;}
+    function renderTf(){var box=document.getElementById('tf-list'),badge=document.getElementById('tf-badge');badge.textContent=s_tf_list.length+' / '+s_tf_max;badge.className='badge '+(s_tf_list.some(function(r){return r.installed;})?'badge-success':(s_tf_list.length?'badge-warning':'badge-neutral'));if(!s_tf_list.length){box.innerHTML='<div style="padding:1rem;color:var(--text-muted);border:1px dashed var(--border);border-radius:var(--radius-md);">No LAN → Tailnet rules.</div>';return;}box.innerHTML=s_tf_list.map(function(r,i){var state=r.installed?'Active':(r.enabled?(r.error||'Waiting'):'Disabled');return '<div class="tf-row" data-idx="'+i+'" style="border:1px solid var(--border);border-radius:var(--radius-md);padding:.75rem;margin-bottom:.5rem;">'+'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem;"><span class="badge '+(r.installed?'badge-success':'badge-neutral')+'">'+escapeHtml(state)+'</span><button class="btn btn-ghost btn-sm text-danger tf-del" type="button">×</button></div>'+'<div class="grid grid-cols-2"><div class="form-group"><label class="form-label">Name</label><input class="input tf-name" maxlength="31" value="'+escapeHtml(r.name||'')+'" placeholder="Remote SSH"></div><div class="form-group"><label class="feature-switch"><input type="checkbox" class="tf-enabled" '+(r.enabled?'checked':'')+'><span class="feature-switch-track" aria-hidden="true"></span><span>Enabled</span></label></div></div>'+'<div class="grid grid-cols-2"><div class="form-group"><label class="form-label">Protocol</label><select class="select tf-proto"><option value="tcp" '+(r.protocol!=='udp'?'selected':'')+'>TCP</option><option value="udp" '+(r.protocol==='udp'?'selected':'')+'>UDP</option></select></div><div class="form-group"><label class="form-label">Listen port</label><input class="input mono tf-listen" type="number" min="1" max="65535" value="'+escapeHtml(r.listen_port||'')+'" placeholder="2222"></div></div>'+'<div class="grid grid-cols-2"><div class="form-group"><label class="form-label">Tailnet destination</label><input class="input mono tf-dest" value="'+escapeHtml(r.tailnet_destination||'')+'" placeholder="100.80.70.60 or host.tailnet.ts.net"><span class="form-hint">Must resolve to 100.64.0.0/10.</span></div><div class="form-group"><label class="form-label">Destination port</label><input class="input mono tf-dport" type="number" min="1" max="65535" value="'+escapeHtml(r.destination_port||'')+'" placeholder="22"></div></div>'+'<div class="form-group"><label class="form-label">Allowed source subnet</label><input class="input mono tf-cidr" value="'+escapeHtml(r.allowed_source_subnet||'')+'" placeholder="192.168.1.0/24"><span class="form-hint">Only clients in this CIDR may use the rule.</span></div>'+(r.resolved_ip?'<div class="form-hint">Resolved peer: <code>'+escapeHtml(r.resolved_ip)+'</code> · accepted '+(r.accepted_packets||0)+' · blocked '+(r.blocked_packets||0)+'</div>':'')+'</div>';}).join('');document.querySelectorAll('.tf-row').forEach(function(row){row.querySelectorAll('input,select').forEach(function(el){el.addEventListener(el.type==='checkbox'||el.tagName==='SELECT'?'change':'input',tfDirty);});row.querySelector('.tf-del').addEventListener('click',function(){snapshotTf();s_tf_list.splice(+row.dataset.idx,1);renderTf();tfDirty();});});}
+    function loadTailnetForward(){apiFetch('/api/tailnet-forward').then(function(r){return r.json();}).then(function(d){s_tf_list=(d.rules||[]).slice();s_tf_max=d.max||8;renderTf();document.getElementById('tf-save').disabled=true;}).catch(function(){});}
+    document.getElementById('tf-reload').addEventListener('click',loadTailnetForward);
+    document.getElementById('tf-add').addEventListener('click',function(){if(s_tf_list.length>=s_tf_max){showToast('error','List full','Maximum '+s_tf_max+' rules.',4000);return;}snapshotTf();s_tf_list.push({name:'',enabled:true,protocol:'tcp',listen_port:'',tailnet_destination:'',destination_port:'',allowed_source_subnet:''});renderTf();tfDirty();});
+    document.getElementById('tf-save').addEventListener('click',function(){snapshotTf();var seen={};for(var i=0;i<s_tf_list.length;i++){var r=s_tf_list[i],lp=+r.listen_port,dp=+r.destination_port,key=r.protocol+':'+lp;if(!r.tailnet_destination||!/^\d+\.\d+\.\d+\.\d+\/([0-9]|[12][0-9]|3[0-2])$/.test((r.allowed_source_subnet||'').trim())||lp<1||lp>65535||dp<1||dp>65535){showToast('error','Invalid rule','Check destination, ports and source CIDR in row #'+(i+1)+'.',5000);return;}if(r.enabled&&seen[key]){showToast('error','Port conflict','Duplicate '+key+'.',5000);return;}if(r.enabled)seen[key]=1;}var btn=this;btn.disabled=true;btn.textContent='Saving…';apiFetch('/api/tailnet-forward',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rules:s_tf_list})}).then(function(r){if(!r.ok)return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));});return r.json();}).then(function(){btn.textContent='Save';showToast('success','Saved','LAN → Tailnet rules updated.',4000);loadTailnetForward();}).catch(function(e){btn.disabled=false;btn.textContent='Save';showToast('error','Save failed',e.message,6000);});});
 
     // =====================================================================
     // TAILSCALE PAGE
@@ -6725,6 +6920,7 @@
                           ? d.tx_power_nvs
                           : (typeof d.tx_power === 'number' ? d.tx_power : 0);
           document.getElementById('sys-tx-power').value      = txShown || 0;
+          document.getElementById('sys-web-port').value      = d.web_port || 80;
           updateTxPowerDbm(txShown);
           document.getElementById('sys-device-name-save').disabled = true;
           document.getElementById('sys-version').textContent = d.version || '—';
@@ -6753,7 +6949,6 @@
 
           var authToggle = document.getElementById('sys-web-auth-enabled');
           authToggle.checked = d.web_auth_enabled !== false;
-          setFeatureCardState('web-session-card', authToggle.checked);
           document.getElementById('sys-web-auth-save').disabled = true;
 
           /* Idle session timeout — snap the select to whichever option
@@ -6882,7 +7077,7 @@
 
     /* Device-card dirty-track + save — covers Friendly name, Timezone
      * and TX power since they share one Save button. */
-    ['sys-device-name', 'sys-tz', 'sys-tx-power'].forEach(function (id) {
+    ['sys-device-name', 'sys-tz', 'sys-tx-power', 'sys-web-port'].forEach(function (id) {
       document.getElementById(id).addEventListener('input', function () {
         document.getElementById('sys-device-name-save').disabled = false;
         if (id === 'sys-tx-power') updateTxPowerDbm(this.value);
@@ -7082,7 +7277,8 @@
         apiFetch('/api/firewall')          .then(function (r) { return r.json(); }),
         apiFetch('/api/wol')               .then(function (r) { return r.json(); }),
         apiFetch('/api/mqtt')              .then(function (r) { return r.json(); }),
-        apiFetch('/api/ntfy')              .then(function (r) { return r.json(); })
+        apiFetch('/api/ntfy')              .then(function (r) { return r.json(); }),
+        apiFetch('/api/tailnet-forward')   .then(function (r) { return r.json(); })
       ];
       if (includeSecrets) {
         fetches.push(apiFetch('/api/system/secrets').then(function (r) {
@@ -7122,11 +7318,12 @@
           firewall:      parts[5] || {},
           wol:           (parts[6] && parts[6].devices) || [],
           mqtt:          mqtt,
-          ntfy:          ntfy
+          ntfy:          ntfy,
+          tailnet_forward: (parts[9] && parts[9].rules) || []
         };
         var step = Promise.resolve();
         if (includeSecrets) {
-          var secrets = parts[9] || {};
+          var secrets = parts[10] || {};
           step = encryptSecretsBundle(secrets, passphrase).then(function (enc) {
             backup.secrets_encrypted = enc;
           });
@@ -7236,11 +7433,13 @@
       if (data.wol) steps.push({ name: 'Wake-on-LAN', url: '/api/wol', body: { devices: data.wol } });
       if (data.dhcp_reservations) steps.push({ name: 'reservations',    url: '/api/dhcp/reservations', body: { reservations: data.dhcp_reservations } });
       if (data.portmap)           steps.push({ name: 'portmap',         url: '/api/portmap',           body: { mappings:     data.portmap } });
+      if (data.tailnet_forward)   steps.push({ name: 'LAN to Tailnet',  url: '/api/tailnet-forward',   body: { rules: data.tailnet_forward } });
       if (data.system) {
         var sb = {};
         if (typeof data.system.device_name === 'string') sb.device_name = data.system.device_name;
         if (typeof data.system.tz          === 'string') sb.tz          = data.system.tz;
         if (typeof data.system.tx_power_nvs === 'number') sb.tx_power = data.system.tx_power_nvs;
+        if (typeof data.system.web_port === 'number') sb.web_port = data.system.web_port;
         if (Object.keys(sb).length) steps.push({ name: 'system', url: '/api/system', body: sb });
       }
       if (data.tailscale && data.tailscale.settings) {
@@ -7337,12 +7536,13 @@
       var name     = document.getElementById('sys-device-name').value.trim();
       var tz       = document.getElementById('sys-tz').value.trim();
       var tx_power = parseInt(document.getElementById('sys-tx-power').value, 10) || 0;
+      var web_port = parseInt(document.getElementById('sys-web-port').value, 10) || 80;
       var btn      = this;
       btn.disabled = true;
       apiFetch('/api/system', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ device_name: name, tz: tz, tx_power: tx_power })
+        body:    JSON.stringify({ device_name: name, tz: tz, tx_power: tx_power, web_port: web_port })
       })
         .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .then(function (resp) {
@@ -7542,7 +7742,6 @@
     });
 
     document.getElementById('sys-web-auth-enabled').addEventListener('change', function () {
-      setFeatureCardState('web-session-card', this.checked);
       document.getElementById('sys-web-auth-save').disabled = false;
     });
     document.getElementById('sys-web-auth-save').addEventListener('click', function () {
@@ -8113,6 +8312,7 @@
 
       // ── System tab → Device card ──────────────────────────────────────
       var btnSys = document.getElementById('sys-device-name-save');
+      attachValidator(document.getElementById('sys-web-port'), vPort(false), { saveBtn: btnSys });
       attachValidator(document.getElementById('sys-device-name'),
         function (v) {
           v = (v || '').trim();

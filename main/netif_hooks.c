@@ -10,6 +10,7 @@
 #include "lwip/netif.h"
 #include "lwip/pbuf.h"
 #include "lwip/err.h"
+#include "lwip/tcpip.h"
 
 #include <string.h>
 #include "lwip/ip4.h"
@@ -19,6 +20,7 @@
 
 #include "acl.h"
 #include "netif_hooks.h"
+#include "tailnet_forward.h"
 
 /* MTU-management knobs published by tailscale_mtu.c. ap_mss_clamp is
  * the cap we enforce on every TCP SYN crossing the AP interface (so
@@ -38,6 +40,8 @@ static netif_input_fn       original_sta_input       = NULL;
 static netif_linkoutput_fn  original_sta_linkoutput  = NULL;
 static netif_input_fn       original_ap_input        = NULL;
 static netif_linkoutput_fn  original_ap_linkoutput   = NULL;
+static netif_input_fn       original_wg_input        = NULL;
+static struct netif        *hooked_wg                = NULL;
 
 /* Wire-byte counters. Updated on the LWIP TCPIP task, read from the
  * HTTP server task. Display-only — torn reads at the 32-bit boundary
@@ -232,6 +236,7 @@ static err_t sta_input_hook(struct pbuf *p, struct netif *netif)
 {
     if (p) s_sta_bytes_in += p->tot_len;
     if (acl_drops(acl_check_and_tap(ACL_TO_ESP, p, false))) { pbuf_free(p); return ERR_OK; }
+    if (!tailnet_forward_allow_uplink_packet(p)) { pbuf_free(p); return ERR_OK; }
     return original_sta_input ? original_sta_input(p, netif) : ERR_VAL;
 }
 
@@ -249,6 +254,7 @@ static err_t ap_input_hook(struct pbuf *p, struct netif *netif)
 {
     if (p) s_ap_bytes_in += p->tot_len;
     if (acl_drops(acl_check_and_tap(ACL_TO_AP, p, true))) { pbuf_free(p); return ERR_OK; }
+    if (!tailnet_forward_allow_non_uplink_packet(p, true)) { pbuf_free(p); return ERR_OK; }
     /* PMTU: tell the client to back off when it sends a DF packet
      * bigger than the tunnel can carry. Runs BEFORE we forward so the
      * client gets the signal even when we'd otherwise drop the frame. */
@@ -268,6 +274,39 @@ static err_t ap_linkoutput_hook(struct netif *netif, struct pbuf *p)
     clamp_tcp_mss(p, ap_mss_clamp);
     return original_ap_linkoutput ? original_ap_linkoutput(netif, p) : ERR_VAL;
 }
+
+static err_t wg_input_hook(struct pbuf *p, struct netif *netif)
+{
+    if (!tailnet_forward_allow_non_uplink_packet(p, false)) { pbuf_free(p); return ERR_OK; }
+    return original_wg_input ? original_wg_input(p, netif) : ERR_VAL;
+}
+
+static void netif_hooks_refresh_cb(void *arg)
+{
+    (void)arg;
+    extern struct netif *netif_list;
+    for (struct netif *n = netif_list; n; n = n->next) {
+        const ip4_addr_t *a = netif_ip4_addr(n);
+        if (!a || ip4_addr_isany_val(*a)) continue;
+        uint32_t h = lwip_ntohl(a->addr);
+        if ((h & 0xffc00000u) != 0x64400000u) continue;
+        if (n == hooked_wg && n->input == wg_input_hook) return;
+        original_wg_input = n->input;
+        hooked_wg = n;
+        n->input = wg_input_hook;
+        ESP_LOGI(TAG, "Tailnet input hook installed on %c%c%d", n->name[0], n->name[1], n->num);
+        return;
+    }
+}
+void netif_hooks_refresh(void)
+{
+    /* netif_list and netif function pointers belong to lwIP's tcpip thread.
+     * Queue the dynamic WireGuard hook there instead of racing packet input. */
+    err_t err = tcpip_try_callback(netif_hooks_refresh_cb, NULL);
+    if (err != ERR_OK)
+        ESP_LOGW(TAG, "could not schedule Tailnet input-hook refresh: %d", err);
+}
+
 
 void netif_hooks_init(void)
 {
@@ -299,4 +338,5 @@ void netif_hooks_init(void)
     }
 
     installed = (sta != NULL) || (ap != NULL);
+    netif_hooks_refresh();
 }

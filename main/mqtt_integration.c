@@ -26,6 +26,7 @@
 #include "tailscale_config.h"
 #include "wol.h"
 #include "fourvia6.h"
+#include "tailnet_forward.h"
 
 static const char *TAG = "mqtt_bridge";
 static mqtt_integration_config_t s_config;
@@ -217,6 +218,16 @@ static void publish_discovery(void)
     discovery_publish_entity("sensor", "fourvia6_flows", "4via6 active flows",
                              s_state_topic, "{{ value_json.fourvia6_active_flows }}",
                              NULL, NULL, NULL);
+    discovery_publish_entity("sensor", "tailnet_forward_configured", "LAN to Tailnet rules",
+                             s_state_topic, "{{ value_json.tailnet_forward_configured }}", NULL, NULL, NULL);
+    discovery_publish_entity("sensor", "tailnet_forward_enabled", "LAN to Tailnet rules enabled",
+                             s_state_topic, "{{ value_json.tailnet_forward_enabled }}", NULL, NULL, NULL);
+    discovery_publish_entity("sensor", "tailnet_forward_installed", "LAN to Tailnet rules active",
+                             s_state_topic, "{{ value_json.tailnet_forward_installed }}", NULL, NULL, NULL);
+    discovery_publish_entity("sensor", "tailnet_forward_accepted", "LAN to Tailnet accepted packets",
+                             s_state_topic, "{{ value_json.tailnet_forward_accepted_packets }}", NULL, NULL, NULL);
+    discovery_publish_entity("sensor", "tailnet_forward_blocked", "LAN to Tailnet blocked packets",
+                             s_state_topic, "{{ value_json.tailnet_forward_blocked_packets }}", NULL, NULL, NULL);
 
     snprintf(command, sizeof command, "%s/command/ap_always_on", cfg.base_topic);
     discovery_publish_entity("switch", "ap_always_on", "Access point always on",
@@ -254,6 +265,27 @@ static void publish_discovery(void)
     snprintf(command, sizeof command, "%s/command/status", cfg.base_topic);
     discovery_publish_entity("button", "publish_status", "Publish status now",
                              NULL, NULL, command, NULL, NULL);
+
+    int tf_count = tailnet_forward_count();
+    for (int i = 0; i < tf_count; i++) {
+        tailnet_forward_rule_t rule;
+        if (!tailnet_forward_get(i, &rule, NULL)) continue;
+        char object_id[48], state_template[96], label[80];
+        snprintf(object_id, sizeof object_id, "tailnet_forward_%d", i + 1);
+        snprintf(command, sizeof command, "%s/command/tailnet_forward/%d", cfg.base_topic, i);
+        snprintf(state_template, sizeof state_template, "{{ value_json.tailnet_forward_rules[%d].enabled }}", i);
+        snprintf(label, sizeof label, "LAN to Tailnet: %.60s", rule.name[0] ? rule.name : rule.destination);
+        discovery_publish_entity("switch", object_id, label, s_state_topic, state_template, command, NULL, NULL);
+    }
+    /* Retained discovery records survive rule deletion and reboot. Clear every
+     * unused slot so Home Assistant does not keep orphaned rule switches. */
+    for (int i = tf_count; i < TAILNET_FORWARD_MAX; i++) {
+        char object_id[48], topic[256];
+        snprintf(object_id, sizeof object_id, "tailnet_forward_%d", i + 1);
+        snprintf(topic, sizeof topic, "%s/switch/%s/%s/config",
+                 cfg.discovery_prefix, s_device_id, object_id);
+        publish(topic, "", 1);
+    }
 
     int count = wol_count();
     for (int i = 0; i < count; i++) {
@@ -355,6 +387,18 @@ static void publish_state(void)
     cJSON_AddNumberToObject(root, "mqtt_watchdog_wake_count", s_watchdog_wake_count);
     cJSON_AddNumberToObject(root, "broker_silence_seconds",
                             mqtt_integration_broker_silence_seconds());
+    uint32_t tf_enabled=0,tf_installed=0,tf_accepted=0,tf_blocked=0;
+    tailnet_forward_totals(&tf_enabled,&tf_installed,&tf_accepted,&tf_blocked);
+    cJSON_AddNumberToObject(root,"tailnet_forward_configured",tailnet_forward_count());
+    cJSON_AddNumberToObject(root,"tailnet_forward_enabled",tf_enabled);
+    cJSON_AddNumberToObject(root,"tailnet_forward_installed",tf_installed);
+    cJSON_AddNumberToObject(root,"tailnet_forward_accepted_packets",tf_accepted);
+    cJSON_AddNumberToObject(root,"tailnet_forward_blocked_packets",tf_blocked);
+    cJSON *tf_rules=cJSON_AddArrayToObject(root,"tailnet_forward_rules");
+    for(int i=0;i<tailnet_forward_count();i++){
+        tailnet_forward_rule_t rule;tailnet_forward_runtime_t rt;if(!tailnet_forward_get(i,&rule,&rt))continue;
+        cJSON *j=cJSON_CreateObject();cJSON_AddStringToObject(j,"name",rule.name);cJSON_AddStringToObject(j,"enabled",rule.enabled?"ON":"OFF");cJSON_AddStringToObject(j,"protocol",rule.proto==17?"udp":"tcp");cJSON_AddNumberToObject(j,"listen_port",rule.listen_port);cJSON_AddStringToObject(j,"destination",rule.destination);cJSON_AddNumberToObject(j,"destination_port",rule.destination_port);cJSON_AddStringToObject(j,"installed",rt.installed?"ON":"OFF");cJSON_AddItemToArray(tf_rules,j);
+    }
 
     char *json = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
@@ -462,6 +506,11 @@ static void handle_command(const char *topic, const char *payload)
                             4096, NULL, 4, NULL) != pdPASS) {
                 s_tailscale_reconnect_pending = false;
             }
+        }
+    } else if (strncmp(command, "tailnet_forward/", 16) == 0) {
+        char *end=NULL; long index=strtol(command+16,&end,10);
+        if(end && *end==0 && index>=0 && index<TAILNET_FORWARD_MAX && tailnet_forward_set_enabled((int)index,payload_is_on(payload))==ESP_OK) {
+            s_publish_requested=true; s_discovery_requested=true;
         }
     } else if (strncmp(command, "wol/", 4) == 0) {
         const char *compact = command + 4;
@@ -705,4 +754,10 @@ void mqtt_integration_publish_now(void)
 void mqtt_integration_wol_changed(void)
 {
     s_discovery_requested = true;
+}
+
+void mqtt_integration_tailnet_forward_changed(void)
+{
+    s_discovery_requested = true;
+    s_publish_requested = true;
 }

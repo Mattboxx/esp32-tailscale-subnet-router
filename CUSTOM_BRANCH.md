@@ -31,10 +31,24 @@ connected board.
 - Optional web password gate and session timeout. Passwords of at least four
   characters are accepted, with a visible warning for weak choices. Password
   verifiers use salted PBKDF2-HMAC-SHA256 and legacy records upgrade on login.
-  After the first full verification following a reboot, a non-persistent,
-  salted exact-match cache makes later correct UI unlocks prompt without
-  weakening the verifier stored in NVS.
+  Browser login uses a one-time PBKDF2/HMAC challenge: the browser performs
+  the costly derivation and the ESP verifies a short proof, so even the first
+  unlock after reboot is prompt and the normal UI does not transmit the
+  plaintext password. Plaintext login is retained only to migrate legacy
+  verifier records; modern records require the challenge proof.
 - Manual local OTA upload and explicit privacy/outbound-traffic reporting.
+- Dedicated uplink-LAN → Tailnet TCP/UDP service forwarding, separate from the
+  existing uplink → AP-client table. Each rule has an enable switch, friendly
+  name, listen/destination ports, Tailnet IPv4 or MagicDNS target, mandatory
+  allowed-source CIDR, counters and live resolution/install status.
+- Configurable web UI TCP port, with two-way conflict checks against both
+  forwarding tables.
+- MQTT/Home Assistant status and per-rule switches for LAN → Tailnet rules;
+  `ntfy info` includes their state and always lists saved WOL device names.
+- Router-oriented network tuning: WiFi modem sleep is disabled to reduce
+  forwarding latency, and the ESP-IDF maximum of 16 lwIP sockets is used with
+  a bounded web-client pool so UI, Tailscale, MQTT, ntfy and diagnostics do not
+  exhaust the descriptor table.
 
 ## Removed from upstream main
 
@@ -91,6 +105,9 @@ This source audit is not a formal proof; tailnet and broker ACLs remain importan
 
 - The web UI is HTTP, so use it only on a trusted AP/LAN or over encrypted
   Tailscale transport.
+- Every LAN → Tailnet rule deliberately exposes a Tailnet service to its
+  allowed uplink subnet. Use the narrowest possible CIDR, keep the peer service
+  authenticated, and enforce Tailnet ACLs as a second boundary.
 - Secure Boot, flash encryption and NVS encryption remain disabled so one
   generic factory image can be flashed on ordinary boards. Physical access can
   therefore expose saved credentials and replace the firmware.

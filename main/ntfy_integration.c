@@ -32,6 +32,8 @@
 #include "nvs_params.h"
 #include "tailscale_config.h"
 #include "wol.h"
+#include "tailnet_forward.h"
+#include "web_ui.h"
 
 static const char *TAG = "ntfy";
 static ntfy_integration_config_t s_config;
@@ -182,10 +184,11 @@ static void send_info(const ntfy_integration_config_t *c)
     char *text = calloc(1, 8192);
     if (!text) return;
     const esp_app_desc_t *app = esp_app_get_description();
-    appendf(text, 8192, "Firmware: %s\nUptime: %llu s\nFree heap: %lu B (minimum %lu B)\nReset reason: %d\n",
+    appendf(text, 8192, "Firmware: %s\nUptime: %llu s\nFree heap: %lu B (minimum %lu B)\nReset reason: %d\nWeb UI port: %u\n",
             app ? app->version : "unknown", esp_timer_get_time() / 1000000ULL,
             (unsigned long)esp_get_free_heap_size(),
-            (unsigned long)esp_get_minimum_free_heap_size(), (int)esp_reset_reason());
+            (unsigned long)esp_get_minimum_free_heap_size(), (int)esp_reset_reason(),
+            (unsigned)web_ui_configured_port());
 
     esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
     esp_netif_ip_info_t ip = {0};
@@ -244,19 +247,26 @@ static void send_info(const ntfy_integration_config_t *c)
                     m[0],m[1],m[2],m[3],m[4],m[5], clients.sta[i].rssi);
         }
     }
+    uint32_t tf_enabled=0,tf_installed=0,tf_accepted=0,tf_blocked=0;
+    tailnet_forward_totals(&tf_enabled,&tf_installed,&tf_accepted,&tf_blocked);
+    appendf(text,8192,"\nLAN -> Tailnet forwarding: %lu configured, %lu enabled, %lu active\nAccepted/blocked packets: %lu/%lu\n",
+            (unsigned long)tailnet_forward_count(),(unsigned long)tf_enabled,(unsigned long)tf_installed,
+            (unsigned long)tf_accepted,(unsigned long)tf_blocked);
+    if(c->info_include_details){for(int i=0;i<tailnet_forward_count();i++){tailnet_forward_rule_t r;tailnet_forward_runtime_t rt;if(!tailnet_forward_get(i,&r,&rt))continue;char cidr[32];tailnet_forward_format_cidr(r.source_network,r.source_prefix,cidr,sizeof cidr);appendf(text,8192,"- %s: %s/%u -> %s:%u, source %s [%s]\n",r.name[0]?r.name:"unnamed",r.proto==17?"UDP":"TCP",r.listen_port,r.destination,r.destination_port,cidr,rt.installed?"active":(rt.error[0]?rt.error:"inactive"));}}
+
     mqtt_integration_config_t mqtt;
     mqtt_integration_get_config(&mqtt);
     appendf(text, 8192, "\nMQTT: %s / %s\nSaved WOL devices: %d\n",
             mqtt_integration_connected() ? "connected" : "disconnected",
             mqtt.enabled ? "enabled" : "disabled", wol_count());
-    if (c->info_include_details) {
-        for (int i = 0; i < wol_count(); i++) {
-            wol_device_t w;
-            char mac[18];
-            if (!wol_get(i, &w)) continue;
-            wol_format_mac(w.mac, mac);
-            appendf(text, 8192, "- %s (%s)\n", w.name[0] ? w.name : "unnamed", mac);
+    for (int i = 0; i < wol_count(); i++) {
+        wol_device_t w;
+        if (!wol_get(i, &w)) continue;
+        appendf(text, 8192, "- %s", w.name[0] ? w.name : "unnamed");
+        if (c->info_include_details) {
+            char mac[18]; wol_format_mac(w.mac, mac); appendf(text, 8192, " (%s)", mac);
         }
+        appendf(text, 8192, "\n");
     }
     /* ntfy messages are limited in size. Send deterministic chunks; no chunk
      * contains passwords, WiFi keys, Tailscale keys, or broker/ntfy tokens. */

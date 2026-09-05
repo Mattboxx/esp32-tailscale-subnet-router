@@ -1,4 +1,4 @@
-Firmware version: 0.1.19-Mattboxx
+Firmware version: 0.1.19-Mattboxx-1.2
 Firmware branch: mattboxx
 Target: ESP32-S3 N16R8, flash mode DIO, 80 MHz, image size 4 MB
 Build framework: ESP-IDF 5.3.1 via PlatformIO
@@ -11,9 +11,9 @@ Official archive SHA256:
 2b4a73c45db27426685896f64ce3e557f63a64f43cc100cb65c0cc3486af96d3
 
 Included file SHA256 values:
-bootloader.bin         fdee2dfb1562c66e3673990157e392d7af7d99bb9cae477dd63647bdb6a7cbcb
-firmware-factory.bin   4e96137ffbc81339ee408bff96050f1a2241f7f0cfc8f82236ef69319dd53187
-firmware.bin           1788a5bc461b72ce09f47882d0588d91ce6f357edb5b2c5c6488ae85699fdd5b
+bootloader.bin         f843ee0199942b80ffbe3251f821aef6f19d655ccba2951f673c2902fff7b302
+firmware-factory.bin   f8e3274f5ffe5c787f45893e4925fe15e7effbdad36ffbd75a337c4ae1099908
+firmware.bin           21dd37a429b52c81a2094c63396e239c7f7b29ad767107b8f89534c1d19c8c4e
 ota_data_initial.bin   7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f
 partitions.bin         0e4ae97e72746c559529154007a256e26158230263cb43cfca415525ef9c9489
 esptool.exe            a939e28fe2fbb53e65e46f0246a4d71b9fd6c052ef0e046182df4a4fe8bec946
