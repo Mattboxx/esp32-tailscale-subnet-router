@@ -27,8 +27,21 @@ def run(ctx: Context) -> list[Result]:
         rt = t.get("runtime", {})
 
         for key in ("enabled", "auth_key_set", "hostname", "login_server",
-                    "advertise_routes", "max_peers", "accept_routes", "lan_bypass"):
+                    "advertise_routes", "advertise_exit_node", "max_peers",
+                    "accept_routes", "lan_bypass"):
             check(results, MODULE_ID, f"settings.{key} present", key in st, f"settings={list(st.keys())}")
+
+        # Exit-node server/client modes must be rejected together before the
+        # handler writes either value, otherwise public packets can loop back
+        # into WireGuard. This uses a syntactically valid CGNAT address but
+        # does not need it to identify a real peer.
+        conflict = spa.post_json("/api/tailscale", {"settings": {
+            "advertise_exit_node": True,
+            "exit_node_ip": "100.64.0.1",
+        }})
+        check(results, MODULE_ID, "reject exit-node client/server conflict",
+              isinstance(conflict, dict) and conflict.get("__http_status") == 400,
+              f"resp={conflict}")
 
         for key in ("connected", "tunnel_ip", "identity_persistent", "identity_pubkey_prefix"):
             check(results, MODULE_ID, f"runtime.{key} present", key in rt, f"runtime={list(rt.keys())}")

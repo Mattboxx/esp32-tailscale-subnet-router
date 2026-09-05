@@ -245,6 +245,10 @@ static void publish_discovery(void)
     discovery_publish_entity("switch", "snat_subnet_routes",
                              "Source-NAT advertised routes", s_state_topic,
                              "{{ value_json.snat_subnet_routes }}", command, NULL, NULL);
+    snprintf(command, sizeof command, "%s/command/advertise_exit_node", cfg.base_topic);
+    discovery_publish_entity("switch", "advertise_exit_node",
+                             "Advertise as exit node", s_state_topic,
+                             "{{ value_json.advertise_exit_node }}", command, NULL, NULL);
     snprintf(command, sizeof command, "%s/command/exit_node_lan_bypass", cfg.base_topic);
     discovery_publish_entity("switch", "exit_node_lan_bypass",
                              "Exit node allow LAN access", s_state_topic,
@@ -362,6 +366,8 @@ static void publish_state(void)
                             tailscale_accept_routes ? "ON" : "OFF");
     cJSON_AddStringToObject(root, "snat_subnet_routes",
                             tailscale_snat_subnet_routes ? "ON" : "OFF");
+    cJSON_AddStringToObject(root, "advertise_exit_node",
+                            tailscale_advertise_exit_node ? "ON" : "OFF");
     cJSON_AddStringToObject(root, "exit_node_lan_bypass",
                             tailscale_lan_bypass ? "ON" : "OFF");
     fourvia6_status_t v6;
@@ -484,6 +490,24 @@ static void handle_command(const char *topic, const char *payload)
     } else if (strcmp(command, "snat_subnet_routes") == 0) {
         set_tailscale_flag("ts_snat_sr", &tailscale_snat_subnet_routes,
                            payload_is_on(payload));
+    } else if (strcmp(command, "advertise_exit_node") == 0) {
+        bool enable_exit_advert = payload_is_on(payload);
+        if (enable_exit_advert && tailscale_exit_node_ip != 0) {
+            ESP_LOGW(TAG, "Cannot advertise as exit node while another exit node is selected");
+            publish_state();
+            return;
+        }
+        set_tailscale_flag("ts_adv_exit", &tailscale_advertise_exit_node,
+                           enable_exit_advert);
+        /* The two default routes live in Hostinfo and require a fresh
+         * registration; reconnect just the VPN instead of rebooting. */
+        if (!s_tailscale_reconnect_pending && tailscale_enabled) {
+            s_tailscale_reconnect_pending = true;
+            if (xTaskCreate(reconnect_tailscale_task, "mqtt_ts_adv_exit",
+                            4096, NULL, 4, NULL) != pdPASS) {
+                s_tailscale_reconnect_pending = false;
+            }
+        }
     } else if (strcmp(command, "exit_node_lan_bypass") == 0) {
         set_tailscale_flag("ts_lan_bp", &tailscale_lan_bypass,
                            payload_is_on(payload));

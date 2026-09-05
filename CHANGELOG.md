@@ -6,6 +6,24 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.1.19-Mattboxx-1.4] — 2026-09-05
+
+### Added
+
+- Optional **exit-node advertising** publishes the standard IPv4 and IPv6
+  default routes, automatically masquerades IPv4 Internet egress, requires
+  normal Tailscale admin approval, and is exposed in the web UI, MQTT/Home
+  Assistant and `ntfy info`.
+- Exit-node server and client modes are mutually exclusive in the UI, API,
+  MQTT control path and boot-time configuration recovery, preventing a
+  tunnel routing loop.
+
+### Fixed
+
+- CPU load no longer remains at 0% on dual-core ESP32-S3 boards. Runtime
+  statistics now compare both idle tasks with the aggregate capacity of both
+  cores and tolerate tasks appearing while a sample is collected.
+
 ## [0.1.19-Mattboxx-1.3] — 2026-09-05
 
 ### Security

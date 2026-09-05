@@ -19,6 +19,13 @@ connected board.
 - Optional Tailscale 4via6 routing for overlapping IPv4 LANs: configurable
   LAN CIDR and site ID, calculated/advertised prefix, bidirectional TCP/UDP/
   ICMP translation, flow counters and Home Assistant status/control.
+- Optional Tailscale exit-node advertising with automatic IPv4 egress NAT,
+  Tailscale admin-approval guidance, MQTT/Home Assistant control and status in
+  `ntfy info`. Server mode is mutually exclusive with selecting another exit
+  node, preventing a tunnel routing loop; IPv6 fails closed on the IPv4 data
+  plane instead of leaking outside the selected exit.
+- Correct dual-core CPU load reporting. The FreeRTOS idle counters are now
+  normalized against both ESP32-S3 cores instead of being clamped to 0%.
 - Optional ntfy alerts for a Tailscale outage while the uplink is working,
   plus replay-protected `info` and saved/direct-MAC WOL commands.
 - Fixed the ntfy command-poll reboot loop: the HTTP response buffer is now

@@ -19,6 +19,7 @@ extern char* tailscale_auth_key;         // tskey-auth-... (Tailscale) or hskey-
 extern char* tailscale_hostname;         // Hostname registered on the tailnet
 extern char* tailscale_login_server;     // "" = Tailscale SaaS; otherwise Headscale URL (e.g. "http://192.168.1.42")
 extern char* tailscale_advertise_routes; // Newline-separated CIDRs (e.g. "192.168.4.0/24\n192.168.1.0/24")
+extern int32_t tailscale_advertise_exit_node; // 1 = advertise 0.0.0.0/0 + ::/0 and provide IPv4 Internet egress
 extern int32_t tailscale_max_peers;      // Active WG tunnels (microlink default 16, range 1..64)
 extern uint32_t tailscale_exit_node_ip;  // VPN IP (host byte order) of selected exit node; 0 = none
 extern int32_t tailscale_netcheck_override;       // 1 = let netcheck override the chosen default region, 0 = always stay on default

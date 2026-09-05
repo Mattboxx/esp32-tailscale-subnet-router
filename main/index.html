@@ -1807,7 +1807,11 @@
               <span class="stat-value mono" id="ts-routes-summary">—</span>
             </div>
             <div class="stat-row">
-              <span class="stat-label">Exit node</span>
+              <span class="stat-label">Advertised as exit node</span>
+              <span class="stat-value mono" id="ts-advertised-exit">—</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Exit node in use</span>
               <span class="stat-value mono text-muted" id="ts-exit">—</span>
             </div>
             <div class="stat-row">
@@ -2256,6 +2260,13 @@
             <label class="form-label" for="ts-routes">Advertised Subnet Routes</label>
             <textarea class="textarea input" id="ts-routes" placeholder="192.168.4.0/24" style="min-height:5rem; font-family:var(--font-mono); font-size:0.9rem;"></textarea>
             <span class="form-hint">One CIDR per line.</span>
+          </div>
+
+          <div class="form-group" style="padding-top:0.75rem; border-top:1px solid var(--border);">
+            <label class="feature-switch">
+              <input type="checkbox" id="ts-advertise-exit"><span class="feature-switch-track" aria-hidden="true"></span><span>Advertise this ESP32 as an exit node</span>
+            </label>
+            <span class="form-hint">Offers this uplink as an IPv4 Internet exit to permitted tailnet devices. After saving and rebooting, approve the exit node in the Tailscale admin console. Internet egress is automatically masqueraded. IPv6 is advertised to prevent traffic leaks but currently fails closed on this IPv4 data plane.</span>
           </div>
 
           <div class="form-group" style="padding-top:0.75rem; border-top:1px solid var(--border);">
@@ -3608,6 +3619,9 @@
       }
       document.getElementById('ts-peers').textContent    = (ts.peers_total != null ? ts.peers_online + ' / ' + ts.peers_total : '—');
       document.getElementById('ts-routes-summary').textContent = ts.advertise_routes || '—';
+      var advExitEl = document.getElementById('ts-advertised-exit');
+      advExitEl.textContent = ts.advertise_exit_node ? 'Enabled' : 'Disabled';
+      advExitEl.style.color = ts.advertise_exit_node ? 'var(--success)' : 'var(--fg-muted)';
       document.getElementById('ts-exit').textContent     = ts.exit_node_ip || '—';
       /* Identity badge — persistent (green) means the device has a
        * stable node-key from NVS; fresh (yellow) means the keys were
@@ -5796,6 +5810,7 @@
           document.getElementById('ts-accept-routes').checked = !!s.accept_routes;
           document.getElementById('ts-lan-bypass').checked    = !!s.lan_bypass;
           document.getElementById('ts-snat').checked          = !!s.snat_subnet_routes;
+          document.getElementById('ts-advertise-exit').checked = !!s.advertise_exit_node;
           var v6 = s.fourvia6 || {};
           document.getElementById('ts-4via6-enabled').checked = !!v6.enabled;
           document.getElementById('ts-4via6-lan').value = v6.lan_cidr || '';
@@ -5969,7 +5984,7 @@
 
     /* Dirty-track and wiring. */
     ['ts_enabled_on', 'ts-auth-key', 'ts-hostname', 'ts-login',
-     'ts-routes', 'ts-max-peers', 'ts-accept-routes', 'ts-lan-bypass', 'ts-snat', 'ts-exit-node',
+     'ts-routes', 'ts-max-peers', 'ts-accept-routes', 'ts-lan-bypass', 'ts-snat', 'ts-advertise-exit', 'ts-exit-node',
      'ts-4via6-enabled', 'ts-4via6-lan', 'ts-4via6-site'
     ].forEach(function (id) {
       var el = document.getElementById(id);
@@ -6015,6 +6030,27 @@
           { html: true, confirmText: 'Add', danger: false }
         );
       }).catch(function () {});
+    });
+
+    /* Exit-node server and client modes are mutually exclusive: combining
+     * them would feed forwarded Internet packets back into the tunnel. */
+    document.getElementById('ts-advertise-exit').addEventListener('change', function () {
+      if (!this.checked) return;
+      var selected = document.getElementById('ts-exit-node');
+      if (selected.value) {
+        selected.value = '';
+        showToast('info', 'Exit-node mode changed',
+          'The selected upstream exit node was cleared because this device will advertise itself as one.', 6000);
+      }
+    });
+    document.getElementById('ts-exit-node').addEventListener('change', function () {
+      if (!this.value) return;
+      var advertised = document.getElementById('ts-advertise-exit');
+      if (advertised.checked) {
+        advertised.checked = false;
+        showToast('info', 'Exit-node mode changed',
+          'Exit-node advertisement was disabled because this device will use another exit node.', 6000);
+      }
     });
 
     /* MTU card — separate Save button + dirty-track, applies live. */
@@ -6107,6 +6143,7 @@
           accept_routes:     document.getElementById('ts-accept-routes').checked,
           lan_bypass:        document.getElementById('ts-lan-bypass').checked,
           snat_subnet_routes: document.getElementById('ts-snat').checked,
+          advertise_exit_node: document.getElementById('ts-advertise-exit').checked,
           exit_node_ip:      document.getElementById('ts-exit-node').value,
           fourvia6: {
             enabled: document.getElementById('ts-4via6-enabled').checked,

@@ -46,7 +46,7 @@ def run(ctx: Context) -> list[Result]:
                   invalid == 0, f"{invalid} inputs are red on first render")
 
         # No duplicate ids on routes / hostname (the bug we hit before)
-        for elt_id in ("ts-routes", "ts-hostname"):
+        for elt_id in ("ts-routes", "ts-hostname", "ts-advertise-exit"):
             n = spa.page.evaluate(f"document.querySelectorAll('#{elt_id}').length")
             check(results, MODULE_ID, f"id #{elt_id} unique",
                   n == 1, f"found {n} elements (should be 1)")

@@ -4,7 +4,7 @@
 
 # ESP32 Tailscale Gateway
 
-### Subnet router · LAN → Tailnet port forwarder · IoT WiFi gateway · MQTT/Home Assistant · Wake-on-LAN
+### Subnet router · Exit node · LAN → Tailnet port forwarder · IoT WiFi gateway · MQTT/Home Assistant · Wake-on-LAN
 
 **Turn a single ESP32-S3 into a pocket-sized, privacy-first gateway between your
 LAN, isolated WiFi devices and an entire Tailscale or Headscale network — no
@@ -47,7 +47,7 @@ the existing AP-side port forwarding.
 
 ## Why the Mattboxx edition is different
 
-Version `0.1.19-Mattboxx-1.3` is based on upstream `v0.1.19`. This firmware line
+Version `0.1.19-Mattboxx-1.4` is based on upstream `v0.1.19`. This firmware line
 is developed, flashed and end-to-end tested on a real ESP32-S3 N16R8; every
 release is also compiled and statically checked before publication.
 
@@ -59,6 +59,7 @@ release is also compiled and statically checked before publication.
 | **MQTT + Home Assistant** | Retained availability and device state, Last Will, broker watchdog, inbound commands and automatic discovery for AP, routes, SNAT, LAN bypass, Tailscale, 4via6, reconnect, restart, WOL and every LAN → Tailnet rule. |
 | **ntfy remote operations** | Optional outage alerts, bounded diagnostic context, `info` replies and WOL commands with durable polling and replay protection. Private details stay hidden unless explicitly enabled. |
 | **Tailscale 4via6** | Optional bidirectional TCP/UDP/ICMP translation for overlapping IPv4 LANs, with calculated advertised prefix, flow counters and Home Assistant controls. |
+| **Exit-node server** | Advertise the ESP32 itself as a Tailscale exit node, with automatic IPv4 egress masquerading, admin-approval guidance, fail-closed IPv6 behavior and Home Assistant/ntfy visibility. Server mode cannot conflict with selecting another exit node. |
 | **Web administration** | Responsive dark UI, graphical feature switches, clear disabled cards, configurable web port, optional password gate and session timeout, local OTA and encrypted backup/restore. |
 | **Fast, safer login** | Salted 60,000-round PBKDF2-HMAC-SHA256 verifier plus a one-time browser challenge; no plaintext password for modern records and no multi-second ESP-side unlock delay. |
 | **Reliability fixes** | Repairs WiFi scan/save and HTTP 431 failures, ntfy reboot loops and missed commands, false post-login offline state, forwarding-table startup counts and web/Tailscale socket starvation. |
@@ -174,7 +175,12 @@ traffic you route through it.)*
   single-page; served straight off the device.
 - **Tailscale, the real protocol** — DISCO peer discovery, direct paths
   *and* DERP relay fallback, NAT traversal, MagicDNS-aware, exit-node
-  client and gateway. Powered by [microlink](https://github.com/Csontikka/microlink).
+  client, exit-node server and gateway. Powered by [microlink](https://github.com/Csontikka/microlink).
+- **Exit-node advertising** — optionally offer the ESP32 uplink as an IPv4
+  Internet exit for authorized tailnet peers. The firmware announces the
+  standard default routes, automatically applies egress NAT, and prevents
+  simultaneous exit-node client/server modes. Approval in the Tailscale admin
+  console is still required. IPv6 is fail-closed on the current IPv4 data plane.
 - **Exit-node aware routing** — AP clients' internet traffic can be
   forced through a chosen Tailscale exit node; when the exit node is
   unreachable the firmware **fails closed** (traffic stops) rather than
@@ -257,7 +263,7 @@ Real-world results from the field (see [#9](../../issues/9) and
 ### 1. Flash it — no build tools required
 
 Download the latest
-[`ESP32-S3-router-0.1.19-Mattboxx-1.3-windows.zip`](../../releases/latest),
+[`ESP32-S3-router-0.1.19-Mattboxx-1.4-windows.zip`](../../releases/latest),
 connect the ESP32-S3 over USB and run one of the included guided batch files:
 
 - `UPDATE_KEEP_SETTINGS.bat` updates an existing installation without erasing its configuration;
@@ -508,6 +514,10 @@ key); disable it for the tailnet or pre-authorize the node.
 - **Exit node fails closed.** By design — when a selected exit node is
   unreachable, AP-client internet traffic stops rather than leaking to
   the local uplink. Clear the exit node to restore direct internet.
+- **Exit-node server egress is IPv4-only.** The device advertises both
+  standard default routes so a client cannot leak IPv6 around the chosen exit,
+  but the current microlink data plane only forwards IPv4 Internet traffic.
+  IPv6 through this ESP32 therefore fails closed instead of bypassing it.
 - **Tailnet lock unsupported.** Headscale over HTTPS needs a public-CA
   certificate (self-signed is rejected).
 - **Local web UI uses HTTP.** Tailscale still encrypts tailnet transport, but
@@ -538,7 +548,7 @@ connections. Diagnostic ping and traceroute run only when explicitly started.
 
 For the complete, explicit comparison with upstream `main`, see
 [`CUSTOM_BRANCH.md`](CUSTOM_BRANCH.md). A ready-to-use Windows flash package is
-available as [`ESP32-S3-router-0.1.19-Mattboxx-1.3-windows.zip`](flash-package/ESP32-S3-router-0.1.19-Mattboxx-1.3-windows.zip);
+available as [`ESP32-S3-router-0.1.19-Mattboxx-1.4-windows.zip`](flash-package/ESP32-S3-router-0.1.19-Mattboxx-1.4-windows.zip);
 instructions are in [`flash-package/README.txt`](flash-package/README.txt).
 
 ## Security

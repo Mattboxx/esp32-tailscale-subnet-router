@@ -819,7 +819,8 @@ err_t __wrap_ip_napt_forward(struct pbuf *p, struct ip_hdr *iphdr,
         }
 
         /* SNAT advertised subnet routes (opt-in, tailscale --snat-subnet-routes
-         * semantics, default OFF). A packet forwarded FROM the tunnel (WG netif)
+         * semantics, default OFF), and always SNAT exit-node egress. A packet
+         * forwarded FROM the tunnel (WG netif)
          * OUT through the STA uplink keeps its tailnet source (100.x) today,
          * because esp-lwip only masquerades when the INBOUND netif has napt set
          * (ip4_napt.c: `if (!inp->napt) return ERR_OK`) and only the AP netif is
@@ -831,7 +832,8 @@ err_t __wrap_ip_napt_forward(struct pbuf *p, struct ip_hdr *iphdr,
          * on the STA side) reverses it automatically. Gated to inp==wg && outp==sta
          * so AP→tunnel / tunnel→AP / AP→WAN paths are untouched (no regression).
          * Runs in the single-threaded tcpip context, so the toggle is race-free. */
-        if (tailscale_snat_subnet_routes && inp && outp && inp != outp &&
+        if ((tailscale_snat_subnet_routes || tailscale_advertise_exit_node) &&
+            inp && outp && inp != outp &&
             !ip_in_cgnat(dest_hbo) &&
             inp == find_wg_netif() && netif_is_sta(outp)) {
             uint8_t saved = inp->napt;

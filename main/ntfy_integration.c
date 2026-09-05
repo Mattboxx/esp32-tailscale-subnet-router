@@ -211,8 +211,9 @@ static void send_info(const ntfy_integration_config_t *c)
 
     bool ts = tailscale_is_connected();
     ip4_addr_t ts_ip = {.addr = tailscale_tunnel_ip};
-    appendf(text, 8192, "\nTailscale: %s (enabled: %s)\n",
-            ts ? "connected" : "disconnected", tailscale_enabled ? "yes" : "no");
+    appendf(text, 8192, "\nTailscale: %s (enabled: %s)\nAdvertise as exit node: %s\n",
+            ts ? "connected" : "disconnected", tailscale_enabled ? "yes" : "no",
+            tailscale_advertise_exit_node ? "yes" : "no");
     microlink_t *ml = tailscale_get_microlink();
     int peers = ml ? microlink_get_peer_count(ml) : 0;
     appendf(text, 8192, "Peers (%d):\n", peers);

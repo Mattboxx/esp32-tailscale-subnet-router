@@ -36,6 +36,7 @@ char* tailscale_auth_key = NULL;
 char* tailscale_hostname = NULL;
 char* tailscale_login_server = NULL;
 char* tailscale_advertise_routes = NULL;
+int32_t tailscale_advertise_exit_node = 0;
 int32_t tailscale_max_peers = 16;
 uint32_t tailscale_exit_node_ip = 0;
 int32_t tailscale_netcheck_override = 0;          /* default: OFF — netcheck mis-selects regions (garbage STUN RTTs: picked London #8 for a HU node, fra/nue sometimes missing because probes tunnel through the exit netif) which destabilises DERP. Stay on the configured/echoed home region until the netcheck STUN path is fixed. Runtime-overridable via NVS. */
@@ -80,6 +81,9 @@ void tailscale_init(void)
     tailscale_hostname         = nvs_str_or_empty("ts_hostname");
     tailscale_login_server     = nvs_str_or_empty("ts_login");
     tailscale_advertise_routes = nvs_str_or_empty("ts_routes");
+    if (nvs_param_get_int("ts_adv_exit", &v) == ESP_OK) {
+        tailscale_advertise_exit_node = (v ? 1 : 0);
+    }
     if (nvs_param_get_int("ts_maxpeers", &v) == ESP_OK && v >= 1 && v <= 64) {
         tailscale_max_peers = v;
     }
@@ -105,6 +109,14 @@ void tailscale_init(void)
     }
     if (nvs_param_get_int("ts_snat_sr", &v) == ESP_OK) {
         tailscale_snat_subnet_routes = (v ? 1 : 0);
+    }
+    if (tailscale_advertise_exit_node && tailscale_exit_node_ip != 0) {
+        /* A node cannot safely be both an exit-node server and a client of a
+         * different exit node: forwarded packets would loop into WireGuard.
+         * Preserve the older client selection and clear the newer advert. */
+        ESP_LOGW(TAG, "Conflicting exit-node modes; disabling exit-node advertisement");
+        tailscale_advertise_exit_node = 0;
+        (void)nvs_param_set_int("ts_adv_exit", 0);
     }
     ESP_LOGI(TAG, "Config loaded (enabled=%ld, max_peers=%ld, login_server=%s, exit_node=%lu.%lu.%lu.%lu)",
              (long)tailscale_enabled, (long)tailscale_max_peers,
@@ -160,6 +172,20 @@ esp_err_t tailscale_connect(void)
     char effective_routes[512];
     fourvia6_effective_routes(tailscale_advertise_routes,
                               effective_routes, sizeof effective_routes);
+    if (tailscale_advertise_exit_node) {
+        /* Stock tailscaled represents --advertise-exit-node as both default
+         * routes. Advertising both also prevents a dual-stack client from
+         * leaking IPv6 outside the selected exit node. The current microlink
+         * data plane forwards IPv4; IPv6 therefore fails closed. */
+        size_t used = strlen(effective_routes);
+        int written = snprintf(effective_routes + used,
+                               sizeof effective_routes - used,
+                               "%s0.0.0.0/0\n::/0", used ? "\n" : "");
+        if (written < 0 || (size_t)written >= sizeof effective_routes - used) {
+            ESP_LOGE(TAG, "Advertised route list is too long to add exit-node routes");
+            return ESP_ERR_INVALID_SIZE;
+        }
+    }
 
     microlink_config_t cfg = {
         .auth_key = tailscale_auth_key,
@@ -201,10 +227,11 @@ esp_err_t tailscale_connect(void)
     }
 
     tailscale_connected = true;
-    ESP_LOGI(TAG, "Tailscale started (device=%s, ctrl=%s, routes=%s, max_peers=%d)",
+    ESP_LOGI(TAG, "Tailscale started (device=%s, ctrl=%s, routes=%s, advertise_exit=%s, max_peers=%d)",
              cfg.device_name ? cfg.device_name : "<auto>",
              cfg.ctrl_host ? cfg.ctrl_host : "<saas>",
              (cfg.advertise_routes && cfg.advertise_routes[0]) ? cfg.advertise_routes : "<none>",
+             tailscale_advertise_exit_node ? "yes" : "no",
              cfg.max_peers);
     return ESP_OK;
 }

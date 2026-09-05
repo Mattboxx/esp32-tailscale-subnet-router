@@ -194,7 +194,8 @@ static const char *reset_reason_str(void)
 }
 
 /* Live CPU-load percentage from the FreeRTOS runtime-stats counters.
- * Compares the IDLE0+IDLE1 task tick deltas against total task ticks
+ * Compares the IDLE0+IDLE1 task tick deltas against the total execution
+ * capacity across all cores
  * since the previous sample, so the first call returns 0 and every
  * call after that gives the load over the elapsed interval. Throttled
  * to 1-per-second so the same /api/status poll burst doesn't churn
@@ -211,11 +212,18 @@ static uint8_t sample_cpu_load_pct(void)
         return s_last_load_pct;
     }
 
-    UBaseType_t n = uxTaskGetNumberOfTasks();
+    /* Leave a little headroom for tasks created between the count and the
+     * snapshot. If the array is too small uxTaskGetSystemState returns zero. */
+    UBaseType_t n = uxTaskGetNumberOfTasks() + 4;
     TaskStatus_t *arr = malloc(sizeof(TaskStatus_t) * n);
     if (!arr) return s_last_load_pct;
     uint32_t total = 0;
     UBaseType_t got = uxTaskGetSystemState(arr, n, &total);
+
+    if (got == 0 || total == 0) {
+        free(arr);
+        return s_last_load_pct;
+    }
 
     uint32_t idle = 0;
     for (UBaseType_t i = 0; i < got; i++) {
@@ -228,10 +236,16 @@ static uint8_t sample_cpu_load_pct(void)
     if (s_last_sample_us != 0 && total > s_last_total) {
         uint32_t total_delta = total - s_last_total;
         uint32_t idle_delta  = idle  - s_last_idle;
-        if (idle_delta >= total_delta) {
+        uint64_t capacity_delta = (uint64_t)total_delta * configNUMBER_OF_CORES;
+        /* uxTaskGetSystemState returns one wall-clock run-time counter, while
+         * each core has its own IDLE task. On the dual-core S3 the previous
+         * code compared IDLE0+IDLE1 against only one core's elapsed time, so
+         * idle_delta was almost always >= total_delta and the UI stuck at 0%.
+         * Normalize against the aggregate capacity of every active core. */
+        if ((uint64_t)idle_delta >= capacity_delta) {
             s_last_load_pct = 0;
         } else {
-            s_last_load_pct = (uint8_t)(100 - ((uint64_t)idle_delta * 100 / total_delta));
+            s_last_load_pct = (uint8_t)(100 - ((uint64_t)idle_delta * 100 / capacity_delta));
         }
     }
     s_last_total     = total;
@@ -386,6 +400,7 @@ static esp_err_t status_handler(httpd_req_t *req)
     cJSON *ts = cJSON_CreateObject();
     cJSON_AddBoolToObject  (ts, "enabled",   tailscale_enabled != 0);
     cJSON_AddBoolToObject  (ts, "connected", ts_connected);
+    cJSON_AddBoolToObject  (ts, "advertise_exit_node", tailscale_advertise_exit_node != 0);
     if (tailscale_hostname)         cJSON_AddStringToObject(ts, "hostname",         tailscale_hostname);
     if (tailscale_advertise_routes) cJSON_AddStringToObject(ts, "advertise_routes", tailscale_advertise_routes);
     if (tailscale_tunnel_ip) {
@@ -2951,6 +2966,7 @@ static esp_err_t tailscale_handler(httpd_req_t *req)
     cJSON_AddBoolToObject  (settings, "lan_bypass",              tailscale_lan_bypass != 0);
     cJSON_AddBoolToObject  (settings, "accept_routes",           tailscale_accept_routes != 0);
     cJSON_AddBoolToObject  (settings, "snat_subnet_routes",      tailscale_snat_subnet_routes != 0);
+    cJSON_AddBoolToObject  (settings, "advertise_exit_node",     tailscale_advertise_exit_node != 0);
     if (tailscale_exit_node_ip) {
         /* tailscale_exit_node_ip is documented as host byte order. */
         char buf[16];
@@ -3136,6 +3152,34 @@ static esp_err_t tailscale_save_handler(httpd_req_t *req)
      * the credential. */
     const cJSON *s = cJSON_GetObjectItem(root, "settings");
     if (cJSON_IsObject(s)) {
+        /* Acting as an exit node and consuming another exit node at the same
+         * time would route received Internet traffic straight back into the
+         * tunnel. Reject the ambiguous configuration before any NVS writes. */
+        const cJSON *advertise_exit = cJSON_GetObjectItem(s, "advertise_exit_node");
+        const cJSON *selected_exit = cJSON_GetObjectItem(s, "exit_node_ip");
+        bool want_advertise_exit = cJSON_IsBool(advertise_exit)
+                                   ? cJSON_IsTrue(advertise_exit)
+                                   : tailscale_advertise_exit_node != 0;
+        bool want_selected_exit = tailscale_exit_node_ip != 0;
+        if (cJSON_IsString(selected_exit)) {
+            ip4_addr_t parsed = { 0 };
+            if (selected_exit->valuestring[0] == '\0') {
+                want_selected_exit = false;
+            } else if (!ip4addr_aton(selected_exit->valuestring, &parsed)) {
+                cJSON_Delete(root);
+                httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid exit node IP");
+                return ESP_FAIL;
+            } else {
+                want_selected_exit = true;
+            }
+        }
+        if (want_advertise_exit && want_selected_exit) {
+            cJSON_Delete(root);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                                "cannot advertise and use an exit node at the same time");
+            return ESP_FAIL;
+        }
+
         const cJSON *enabled = cJSON_GetObjectItem(s, "enabled");
         if (cJSON_IsBool(enabled)) {
             nvs_save_int("ts_enabled", cJSON_IsTrue(enabled) ? 1 : 0);
@@ -3181,6 +3225,7 @@ static esp_err_t tailscale_save_handler(httpd_req_t *req)
         _TS_REFRESH_BOOL("lan_bypass",              tailscale_lan_bypass);
         _TS_REFRESH_BOOL("accept_routes",           tailscale_accept_routes);
         _TS_REFRESH_BOOL("snat_subnet_routes",      tailscale_snat_subnet_routes);
+        _TS_REFRESH_BOOL("advertise_exit_node",     tailscale_advertise_exit_node);
 
         #undef _TS_REFRESH_STR
         #undef _TS_REFRESH_BOOL
@@ -3194,6 +3239,7 @@ static esp_err_t tailscale_save_handler(httpd_req_t *req)
             { cJSON_GetObjectItem(s, "lan_bypass"),        (void *)"ts_lan_bp"  },
             { cJSON_GetObjectItem(s, "accept_routes"),     (void *)"ts_acpt_rt" },
             { cJSON_GetObjectItem(s, "snat_subnet_routes"), (void *)"ts_snat_sr" },
+            { cJSON_GetObjectItem(s, "advertise_exit_node"), (void *)"ts_adv_exit" },
         };
         for (size_t i = 0; i < sizeof bool_keys / sizeof bool_keys[0]; i++) {
             const cJSON *v = bool_keys[i][0];
